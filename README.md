@@ -35,7 +35,7 @@ Make sure you have [Node.js](https://nodejs.org/) (Version 18+ recommended) and 
 
 1. Clone the repository:
    ```bash
-   git clone <your-github-repo-url>
+   git clone https://github.com/ArpanHait/DEEPFAKE_DETECTION.git
    cd deepfake-detection
    ```
 
