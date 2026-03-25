@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { UploadCloud, FileVideo, ShieldCheck, AlertOctagon, RefreshCw, Activity, Terminal } from 'lucide-react';
 
@@ -15,6 +15,7 @@ const MainApplication = ({ onBack }) => {
   const [status, setStatus] = useState('idle'); // 'idle' | 'analyzing' | 'result'
   const [terminalFeed, setTerminalFeed] = useState([]);
   const [isFake, setIsFake] = useState(true); // Toggle for demo purposes
+  const fileInputRef = useRef(null);
 
   // Mock Upload Handler
   const handleUpload = () => {
@@ -79,9 +80,22 @@ const MainApplication = ({ onBack }) => {
             </div>
 
             <div 
-              onClick={handleUpload}
+              onClick={() => fileInputRef.current?.click()}
               className="relative group cursor-pointer border-2 border-dashed border-slate-600 hover:border-blue-500 rounded-2xl p-12 text-center transition-all bg-slate-800/20 hover:bg-blue-900/10"
             >
+              <input 
+                type="file"
+                ref={fileInputRef}
+                className="hidden"
+                accept="video/*,image/*"
+                onChange={(e) => {
+                  const file = e.target.files[0];
+                  if (file) {
+                    console.log(file.name);
+                    handleUpload();
+                  }
+                }}
+              />
               <div className="absolute inset-0 bg-blue-500/5 blur-xl group-hover:bg-blue-500/10 transition-colors pointer-events-none opacity-0 group-hover:opacity-100"></div>
               
               <UploadCloud className="w-16 h-16 text-slate-400 group-hover:text-blue-400 mx-auto mb-4 transition-colors relative z-10" />
