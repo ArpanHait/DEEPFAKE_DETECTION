@@ -16,6 +16,17 @@ const MainApplication = ({ onBack }) => {
   const [terminalFeed, setTerminalFeed] = useState([]);
   const [isFake, setIsFake] = useState(true); // Toggle for demo purposes
   const fileInputRef = useRef(null);
+  const [previewUrl, setPreviewUrl] = useState('');
+  const [fileType, setFileType] = useState('');
+  const [fileName, setFileName] = useState('');
+
+  useEffect(() => {
+    return () => {
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+      }
+    };
+  }, [previewUrl]);
 
   // Mock Upload Handler
   const handleUpload = () => {
@@ -44,6 +55,9 @@ const MainApplication = ({ onBack }) => {
   const resetState = () => {
     setStatus('idle');
     setTerminalFeed([]);
+    setPreviewUrl('');
+    setFileType('');
+    setFileName('');
   };
 
   return (
@@ -91,6 +105,11 @@ const MainApplication = ({ onBack }) => {
                 onChange={(e) => {
                   const file = e.target.files[0];
                   if (file) {
+                    const url = URL.createObjectURL(file);
+                    setPreviewUrl(url);
+                    setFileType(file.type.startsWith('video/') ? 'video' : 'image');
+                    setFileName(file.name);
+                    
                     console.log(file.name);
                     handleUpload();
                   }
@@ -127,8 +146,12 @@ const MainApplication = ({ onBack }) => {
 
               {/* Dummy Thumbnail with Scanning Overlay */}
               <div className="relative w-full max-w-xs rounded-lg overflow-hidden border border-slate-600 aspect-[3/4] bg-slate-800 mt-8 group">
-                {/* Placeholder Image/Video bg */}
-                <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1544717305-2782549b5136?auto=format&fit=crop&q=80&w=400')] bg-cover bg-center opacity-40 mix-blend-luminosity"></div>
+                {/* Dynamically Rendered Uploaded File */}
+                {fileType === 'video' ? (
+                  <video src={previewUrl} autoPlay loop muted playsInline className="absolute inset-0 w-full h-full object-cover opacity-40 mix-blend-luminosity" />
+                ) : (
+                  <img src={previewUrl} className="absolute inset-0 w-full h-full object-cover opacity-40 mix-blend-luminosity" />
+                )}
                 
                 {/* Facial Mapping Mesh Outline (Fake) */}
                 <svg className="absolute inset-0 w-full h-full text-blue-500/40 pointer-events-none drop-shadow-[0_0_8px_rgba(59,130,246,0.8)]" viewBox="0 0 100 100" preserveAspectRatio="none">
@@ -158,7 +181,7 @@ const MainApplication = ({ onBack }) => {
 
               <div className="mt-8 flex items-center gap-3">
                 <FileVideo className="w-5 h-5 text-slate-400" />
-                <span className="text-slate-300 font-mono text-sm">target_subject_01.mp4</span>
+                <span className="text-slate-300 font-mono text-sm">{fileName || "target_subject_01.mp4"}</span>
               </div>
             </div>
 

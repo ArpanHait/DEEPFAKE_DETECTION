@@ -60,17 +60,17 @@ const LandingPage = ({ onStart }) => {
       <motion.button
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6, delay: 0.6 }}
-        whileHover={{ scale: 1.05 }}
-        whileTap={{ scale: 0.95 }}
+        transition={{ duration: 0.1, delay: 0.1 }}
+        whileHover={{ scale: 1.05, transition: { type: "spring", stiffness: 300, damping: 15 } }}
+        whileTap={{ scale: 0.95, transition: { type: "spring", stiffness: 300, damping: 15 } }}
         onClick={onStart}
-        className="group relative inline-flex items-center justify-center px-8 py-4 font-bold text-white transition-all duration-200 bg-blue-600 font-sans rounded-xl focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-slate-900 focus:ring-offset-blue-600 hover:bg-blue-500 shadow-[0_0_30px_-5px_rgba(59,130,246,0.6)] hover:shadow-[0_0_45px_-5px_rgba(59,130,246,0.8)] border border-blue-400/50"
+        className="group relative inline-flex items-center justify-center px-8 py-4 font-bold text-white transition-all duration-300 ease-out bg-blue-600 font-sans rounded-xl focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-slate-900 focus:ring-offset-blue-600 hover:bg-blue-500 shadow-[0_0_30px_-5px_rgba(59,130,246,0.6)] hover:shadow-[0_0_45px_-5px_rgba(59,130,246,0.8)] border border-blue-400/50"
       >
         <span className="mr-3 text-lg">Let's Check</span>
-        <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+        <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform duration-300 ease-out" />
         
         {/* Button Inner Glow */}
-        <div className="absolute inset-0 rounded-xl bg-gradient-to-r from-blue-400/0 via-blue-400/20 to-blue-400/0 opacity-0 group-hover:opacity-100 transition-opacity blur-md pointer-events-none"></div>
+        <div className="absolute inset-0 rounded-xl bg-gradient-to-r from-blue-400/0 via-blue-400/20 to-blue-400/0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 ease-out blur-md pointer-events-none"></div>
       </motion.button>
     </div>
   );
