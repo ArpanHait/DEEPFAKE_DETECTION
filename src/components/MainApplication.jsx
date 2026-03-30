@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { UploadCloud, FileVideo, ShieldCheck, AlertOctagon, RefreshCw, Activity, Terminal } from 'lucide-react';
+import { UploadCloud, FileVideo, ShieldCheck, AlertOctagon, RefreshCw, Activity, Terminal, Fingerprint } from 'lucide-react';
+import { detectDeepfake } from '../services/apiService';
 
 const terminalSteps = [
   "Initializing temporal analysis engine...",
@@ -15,6 +16,7 @@ const MainApplication = ({ onBack }) => {
   const [status, setStatus] = useState('idle'); // 'idle' | 'analyzing' | 'result'
   const [terminalFeed, setTerminalFeed] = useState([]);
   const [isFake, setIsFake] = useState(true); // Toggle for demo purposes
+  const [confidence, setConfidence] = useState(0);
   const fileInputRef = useRef(null);
   const [previewUrl, setPreviewUrl] = useState('');
   const [fileType, setFileType] = useState('');
@@ -28,15 +30,15 @@ const MainApplication = ({ onBack }) => {
     };
   }, [previewUrl]);
 
-  // Mock Upload Handler
-  const handleUpload = () => {
+  // Real Upload Handler
+  const handleUpload = async (file) => {
     setStatus('analyzing');
     setTerminalFeed([terminalSteps[0]]);
     
     // Simulate terminal feed
     let stepIndex = 1;
     const interval = setInterval(() => {
-      if (stepIndex < terminalSteps.length) {
+      if (stepIndex < terminalSteps.length - 1) {
         setTerminalFeed(prev => [...prev, terminalSteps[stepIndex]]);
         stepIndex++;
       } else {
@@ -44,12 +46,25 @@ const MainApplication = ({ onBack }) => {
       }
     }, 800);
 
-    // Transition to result after 5 seconds
-    setTimeout(() => {
+    try {
+      const result = await detectDeepfake(file);
       clearInterval(interval);
-      // setIsFake(Math.random() > 0.5); // Can randomize, but let's keep it dramatic with true for the demo effect
-      setStatus('result');
-    }, 5000);
+      setTerminalFeed(prev => [...prev, terminalSteps[terminalSteps.length - 1]]);
+      
+      setIsFake(result.prediction === "FAKE");
+      setConfidence(result.confidence);
+      
+      setTimeout(() => {
+        setStatus('result');
+      }, 800);
+    } catch (error) {
+      clearInterval(interval);
+      setTerminalFeed(prev => [...prev, `[ERROR] ${error.message}`]);
+      setTimeout(() => {
+        alert(error.message);
+        resetState();
+      }, 3000);
+    }
   };
 
   const resetState = () => {
@@ -58,6 +73,7 @@ const MainApplication = ({ onBack }) => {
     setPreviewUrl('');
     setFileType('');
     setFileName('');
+    setConfidence(0);
   };
 
   return (
@@ -111,7 +127,7 @@ const MainApplication = ({ onBack }) => {
                     setFileName(file.name);
                     
                     console.log(file.name);
-                    handleUpload();
+                    handleUpload(file);
                   }
                 }}
               />
@@ -278,7 +294,7 @@ const MainApplication = ({ onBack }) => {
                         cx="50" cy="50" r="42" fill="transparent" stroke="currentColor" strokeWidth="8" 
                         strokeDasharray="263.89"
                         initial={{ strokeDashoffset: 263.89 }}
-                        animate={{ strokeDashoffset: 263.89 - (263.89 * (isFake ? 0.94 : 0.98)) }}
+                        animate={{ strokeDashoffset: 263.89 - (263.89 * confidence) }}
                         transition={{ duration: 2, ease: "easeOut", delay: 0.6 }}
                         className={isFake ? "text-red-500 drop-shadow-[0_0_8px_rgba(239,68,68,0.8)]" : "text-green-500 drop-shadow-[0_0_8px_rgba(34,197,94,0.8)]"}
                         strokeLinecap="round"
@@ -289,7 +305,7 @@ const MainApplication = ({ onBack }) => {
                         initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 1 }}
                         className="text-3xl font-bold text-white"
                       >
-                        {isFake ? "94%" : "98%"}
+                        {Math.round(confidence * 100)}%
                       </motion.span>
                       <span className="text-[10px] text-slate-400 uppercase tracking-widest mt-1">Confidence</span>
                     </div>
