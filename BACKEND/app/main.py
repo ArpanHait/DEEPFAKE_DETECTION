@@ -93,7 +93,7 @@ def detect_deepfake(file: UploadFile = File(...)):
     label = "FAKE" if score > 0.5 else "REAL"
 
     # Optional: calibrated confidence later
-    confidence = float(score)
+    confidence = float(score) if label=='FAKE' else float(1-score)
 
     # ---------- Response ----------
     response = {
