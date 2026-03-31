@@ -326,7 +326,7 @@ const MainApplication = ({ onBack }) => {
                     Flagged Anomalies
                   </h4>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {["Unnatural eye blinking latency detected", "Mouth-to-audio sync error (124ms offset)", "Edge-blending artifacts on lower jawline", "Inconsistent specular reflections on pupil"].map((item, i) => (
+                    {["Facial and Anatomical Incosistancies", "VIsual Flaws detected", "Edge-blending artifacts on lower jawline", "Inconsistent specular reflections on pupil"].map((item, i) => (
                       <div key={i} className="flex items-start gap-3 text-sm text-red-200/90 bg-red-950/40 p-3 rounded-lg border border-red-900/40 shadow-inner">
                         <div className="w-1.5 h-1.5 rounded-full bg-red-500 mt-1.5 flex-shrink-0 shadow-[0_0_5px_rgba(239,68,68,1)]"></div>
                         <span>{item}</span>
