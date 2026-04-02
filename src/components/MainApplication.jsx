@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { UploadCloud, FileVideo, ShieldCheck, AlertOctagon, RefreshCw, Activity, Terminal, Fingerprint } from 'lucide-react';
+import { AnimatePresence, motion } from 'framer-motion';
+import { Activity, AlertOctagon, FileVideo, Fingerprint, RefreshCw, ShieldCheck, Terminal, UploadCloud } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import { detectDeepfake } from '../services/apiService';
 
 const terminalSteps = [
@@ -150,49 +150,76 @@ const MainApplication = ({ onBack }) => {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
             transition={{ duration: 0.5 }}
-            className="w-full max-w-4xl grid grid-cols-1 md:grid-cols-2 gap-6"
+            className="w-full max-w-6xl grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8"
           >
             {/* Scanning Theater */}
-            <div className="bg-slate-900/50 backdrop-blur-xl border border-slate-700/50 rounded-2xl p-6 shadow-[0_20px_60px_-15px_rgba(0,0,0,0.5)] relative flex flex-col items-center justify-center min-h-[400px]">
+            <div className="lg:col-span-2 bg-slate-900/50 backdrop-blur-xl border border-slate-700/50 rounded-2xl p-6 lg:p-10 shadow-[0_20px_60px_-15px_rgba(0,0,0,0.5)] relative flex flex-col items-center justify-center min-h-[500px]">
               
               <div className="absolute top-4 left-4 flex items-center gap-2 text-blue-400 text-sm font-semibold tracking-wider">
                 <Activity className="w-4 h-4 animate-pulse" />
                 <span>ANALYSIS IN PROGRESS</span>
               </div>
 
-              {/* Dummy Thumbnail with Scanning Overlay */}
-              <div className="relative w-full max-w-xs rounded-lg overflow-hidden border border-slate-600 aspect-[3/4] bg-slate-800 mt-8 group">
-                {/* Dynamically Rendered Uploaded File */}
-                {fileType === 'video' ? (
-                  <video src={previewUrl} autoPlay loop muted playsInline className="absolute inset-0 w-full h-full object-cover opacity-40 mix-blend-luminosity" />
-                ) : (
-                  <img src={previewUrl} className="absolute inset-0 w-full h-full object-cover opacity-40 mix-blend-luminosity" />
-                )}
+              {/* Scanning Mesh Container */}
+              <div className="relative w-full max-w-4xl mx-auto rounded-2xl overflow-hidden border border-[#00FFFF]/40 aspect-video bg-[#050505] mt-8 group ring-1 ring-[#00FFFF]/30 shadow-[0_0_50px_-10px_rgba(0,255,255,0.4)] flex items-center justify-center p-2 sm:p-4 md:p-4">
+                {/* Dynamically Rendered Uploaded File - Partially Grayscale */}
+                <div className="relative w-full h-full z-0 flex items-center justify-center grayscale-[80%]">
+                  {fileType === 'video' ? (
+                    <video src={previewUrl} autoPlay loop muted playsInline className="w-full h-full object-contain drop-shadow-2xl" />
+                  ) : (
+                    <img src={previewUrl} className="w-full h-full object-contain drop-shadow-2xl" />
+                  )}
+                </div>
                 
-                {/* Facial Mapping Mesh Outline (Fake) */}
-                <svg className="absolute inset-0 w-full h-full text-blue-500/40 pointer-events-none drop-shadow-[0_0_8px_rgba(59,130,246,0.8)]" viewBox="0 0 100 100" preserveAspectRatio="none">
-                  {/* Eyes */}
-                  <circle cx="35" cy="40" r="3" fill="none" stroke="currentColor" strokeWidth="0.5" className="animate-pulse" />
-                  <circle cx="65" cy="40" r="3" fill="none" stroke="currentColor" strokeWidth="0.5" className="animate-pulse" />
-                  {/* Face Mesh Lines */}
-                  <path d="M 50 15 L 35 25 L 25 40 L 30 60 L 50 80 L 70 60 L 75 40 L 65 25 Z" fill="none" stroke="currentColor" strokeWidth="0.5" />
-                  <path d="M 50 15 L 50 80" fill="none" stroke="currentColor" strokeWidth="0.2" strokeDasharray="1,1" />
-                  <path d="M 25 40 L 75 40" fill="none" stroke="currentColor" strokeWidth="0.2" strokeDasharray="1,1" />
-                  <path d="M 35 25 L 65 25" fill="none" stroke="currentColor" strokeWidth="0.2" strokeDasharray="1,1" />
+                {/* High-tech Facial Mapping Mesh Outline w/ Generous Bounding Box */}
+                <svg className="absolute inset-0 w-full h-full text-[#00FFFF] pointer-events-none drop-shadow-[0_0_8px_rgba(0,255,255,1)] mix-blend-screen z-10" viewBox="0 0 160 90" preserveAspectRatio="none">
+                  {/* Outer Targeting Corners */}
+                  <path d="M 15 25 L 15 15 L 25 15" fill="none" stroke="currentColor" strokeWidth="1" opacity="0.8" />
+                  <path d="M 145 25 L 145 15 L 135 15" fill="none" stroke="currentColor" strokeWidth="1" opacity="0.8" />
+                  <path d="M 15 65 L 15 75 L 25 75" fill="none" stroke="currentColor" strokeWidth="1" opacity="0.8" />
+                  <path d="M 145 65 L 145 75 L 135 75" fill="none" stroke="currentColor" strokeWidth="1" opacity="0.8" />
+
+                  {/* Nodes & Eyes */}
+                  <circle cx="65" cy="35" r="2.5" fill="none" stroke="currentColor" strokeWidth="0.7" className="animate-pulse" />
+                  <circle cx="95" cy="35" r="2.5" fill="none" stroke="currentColor" strokeWidth="0.7" className="animate-pulse" />
+                  <circle cx="80" cy="50" r="1.5" fill="currentColor" className="animate-ping" />
+                  
+                  {/* Expanded Face Mesh Lines */}
+                  <path d="M 80 10 L 55 25 L 45 45 L 60 70 L 80 80 L 100 70 L 115 45 L 105 25 Z" fill="none" stroke="currentColor" strokeWidth="0.3" opacity="0.9" />
+                  
+                  {/* Inner Structural Connections */}
+                  <path d="M 80 10 L 80 80" fill="none" stroke="currentColor" strokeWidth="0.5" strokeDasharray="3,2" />
+                  <path d="M 45 45 L 115 45" fill="none" stroke="currentColor" strokeWidth="0.5" strokeDasharray="3,2" />
+                  <path d="M 55 25 L 105 25" fill="none" stroke="currentColor" strokeWidth="0.5" strokeDasharray="3,2" />
+                  <path d="M 60 70 L 100 70" fill="none" stroke="currentColor" strokeWidth="0.5" strokeDasharray="3,2" />
+                  
+                  {/* Diagonal crosshairs */}
+                  <path d="M 55 25 L 15 15" fill="none" stroke="currentColor" strokeWidth="0.4" opacity="0.6" strokeDasharray="2,2" />
+                  <path d="M 105 25 L 145 15" fill="none" stroke="currentColor" strokeWidth="0.4" opacity="0.6" strokeDasharray="2,2" />
+                  <path d="M 60 70 L 15 75" fill="none" stroke="currentColor" strokeWidth="0.4" opacity="0.6" strokeDasharray="2,2" />
+                  <path d="M 100 70 L 145 75" fill="none" stroke="currentColor" strokeWidth="0.4" opacity="0.6" strokeDasharray="2,2" />
+
                   {/* Mouth Box */}
-                  <rect x="40" y="65" width="20" height="8" rx="2" fill="none" stroke="currentColor" strokeWidth="0.5" />
+                  <rect x="65" y="60" width="30" height="8" rx="2" fill="none" stroke="currentColor" strokeWidth="0.5" opacity="0.9" />
+                  <line x1="68" y1="64" x2="92" y2="64" stroke="currentColor" strokeWidth="0.5" strokeDasharray="1,1" />
+
+                  {/* Sci-fi Overlay Decor */}
+                  <text x="8" y="85" fill="currentColor" fontSize="3" fontFamily="monospace" opacity="0.6">SYS.SCAN.ACTIVE // ML-VER.9</text>
+                  <text x="115" y="85" fill="currentColor" fontSize="3" fontFamily="monospace" opacity="0.6">COORD: 80.45.Z-X</text>
+                  <path d="M 5 5 L 5 85" fill="none" stroke="currentColor" strokeWidth="0.5" opacity="0.3" />
+                  <path d="M 155 5 L 155 85" fill="none" stroke="currentColor" strokeWidth="0.5" opacity="0.3" />
                 </svg>
 
                 {/* Scanning Laser Line */}
                 <motion.div 
-                  initial={{ top: '0%' }}
-                  animate={{ top: '100%' }}
-                  transition={{ duration: 1.5, repeat: Infinity, ease: "linear" }}
-                  className="absolute left-0 right-0 h-0.5 bg-blue-400 shadow-[0_0_15px_3px_rgba(59,130,246,1)] z-10"
+                  initial={{ top: '-10%' }}
+                  animate={{ top: '110%' }}
+                  transition={{ duration: 2.5, repeat: Infinity, ease: "easeInOut", repeatType: "mirror" }}
+                  className="absolute left-0 right-0 h-[2px] bg-[#00FFFF] shadow-[0_0_20px_6px_rgba(0,255,255,0.8)] z-10"
                 ></motion.div>
                 
                 {/* High-tech overlay grid */}
-                <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.05)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.05)_1px,transparent_1px)] bg-[size:20px_20px] pointer-events-none"></div>
+                <div className="absolute inset-0 bg-[linear-gradient(rgba(0,255,255,0.1)_1px,transparent_1px),linear-gradient(90deg,rgba(0,255,255,0.1)_1px,transparent_1px)] bg-[size:40px_40px] pointer-events-none mix-blend-screen"></div>
               </div>
 
               <div className="mt-8 flex items-center gap-3">
@@ -202,7 +229,7 @@ const MainApplication = ({ onBack }) => {
             </div>
 
             {/* Terminal Feed */}
-            <div className="bg-[#0a0a0a]/80 backdrop-blur-md border border-slate-800 rounded-2xl p-6 shadow-2xl font-mono text-sm relative flex flex-col h-[400px]">
+            <div className="bg-[#0a0a0a]/80 backdrop-blur-md border border-slate-800 rounded-2xl p-6 shadow-2xl font-mono text-sm relative flex flex-col h-[400px] lg:h-auto lg:min-h-[500px]">
               <div className="flex items-center gap-2 mb-4 text-slate-500 border-b border-slate-800 pb-3">
                 <Terminal className="w-5 h-5 text-slate-400" />
                 <span className="uppercase tracking-wider text-xs font-semibold text-slate-400">System Logs / Verbose</span>
