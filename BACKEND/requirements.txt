@@ -5,6 +5,7 @@ Pillow
 torch
 torchvision
 facenet-pytorch
+transformers
 opencv-python-headless
 librosa
 soundfile

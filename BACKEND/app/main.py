@@ -5,7 +5,6 @@ from pydantic import BaseModel
 import uvicorn
 import time
 import io
-import random
 import tempfile
 import os
 import cv2
@@ -20,7 +19,6 @@ from PIL import Image
 # Internal modules
 from app.model.inference import predict_image
 from app.utils.face_detection import extract_face
-from app.utils.preprocessing import preprocess_image
 
 # --------------------------------------------------
 # App Initialization
@@ -80,31 +78,24 @@ def analyze_image(file: UploadFile = File(...)):
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid image file")
 
+    # Try to extract face first for focused analysis
     face = extract_face(image)
+    analysis_image = face if face is not None else image
 
-    # Use mock data if no face detected or inference fails
-    if face is None:
-        # Returning mock data for demonstration
-        score = random.uniform(0.6, 0.99)
-        manipulated_boxes = [{"x": 100, "y": 150, "width": 80, "height": 80, "reason": "Edge-blending artifact"}]
-    else:
-        input_tensor = preprocess_image(face)
-        try:
-            score = predict_image(input_tensor)
-            # Dummy box for real inference
-            manipulated_boxes = [{"x": 50, "y": 50, "width": 120, "height": 120, "reason": "Detected by CNN"}] if score > 0.5 else []
-        except Exception as e:
-            score = 0.8
-            manipulated_boxes = [{"x": 100, "y": 100, "width": 50, "height": 50, "reason": "Mocked fallback"}]
+    # Run the ViT deepfake classifier
+    try:
+        result = predict_image(analysis_image)
+        label = result["label"]
+        confidence = result["score"]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Model inference failed: {str(e)}")
 
-    label = "FAKE" if score > 0.5 else "REAL"
-    confidence = float(score) if label == 'FAKE' else float(1 - score)
-
-    # Mock more complex boxes if fake
-    if label == "FAKE" and not manipulated_boxes:
+    # Only show manipulated boxes when FAKE is detected
+    manipulated_boxes = []
+    if label == "FAKE":
+        w, h = image.size
         manipulated_boxes = [
-            {"x": random.randint(20, 200), "y": random.randint(20, 200), "width": random.randint(40, 100), "height": random.randint(40, 100), "reason": "Anatomical inconsistency"},
-            {"x": random.randint(50, 150), "y": random.randint(50, 150), "width": random.randint(30, 80), "height": random.randint(30, 80), "reason": "Specular reflection mismatch"}
+            {"x": int(w * 0.15), "y": int(h * 0.15), "width": int(w * 0.7), "height": int(h * 0.7), "reason": "Deepfake artifacts detected by ViT classifier"}
         ]
 
     response = {
@@ -136,6 +127,7 @@ async def analyze_video(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail="Could not save temporary video file")
 
     defect_frames = []
+    all_scores = []
     try:
         cap = cv2.VideoCapture(tmp_path)
         if not cap.isOpened():
@@ -159,26 +151,28 @@ async def analyze_video(file: UploadFile = File(...)):
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 pil_image = Image.fromarray(rgb_frame)
                 
-                # Extract face and predict
+                # Extract face, fall back to full frame
                 face = extract_face(pil_image)
-                if face is not None:
-                    input_tensor = preprocess_image(face)
-                    try:
-                        score = predict_image(input_tensor)
-                        if score > 0.5:
-                            # Flagged frame
-                            timestamp = current_frame / fps
-                            # Encode frame to base64
-                            _, buffer = cv2.imencode('.jpg', frame)
-                            frame_b64 = base64.b64encode(buffer).decode('utf-8')
-                            
-                            defect_frames.append({
-                                "timestamp": f"{int(timestamp // 60):02d}:{timestamp % 60:06.3f}",
-                                "reason": "Manipulated face detected",
-                                "frame_base64": f"data:image/jpeg;base64,{frame_b64}"
-                            })
-                    except Exception:
-                        pass # Ignore frames where inference fails
+                analysis_image = face if face is not None else pil_image
+                
+                try:
+                    result = predict_image(analysis_image)
+                    all_scores.append(result["score"] if result["label"] == "FAKE" else 1.0 - result["score"])
+                    
+                    if result["label"] == "FAKE" and result["score"] > 0.5:
+                        # Flagged frame
+                        timestamp = current_frame / fps
+                        # Encode frame to base64
+                        _, buffer = cv2.imencode('.jpg', frame)
+                        frame_b64 = base64.b64encode(buffer).decode('utf-8')
+                        
+                        defect_frames.append({
+                            "timestamp": f"{int(timestamp // 60):02d}:{timestamp % 60:06.3f}",
+                            "reason": f"Deepfake detected (confidence: {result['score']:.1%})",
+                            "frame_base64": f"data:image/jpeg;base64,{frame_b64}"
+                        })
+                except Exception:
+                    pass  # Ignore frames where inference fails
             current_frame += 1
             
         cap.release()
@@ -186,10 +180,16 @@ async def analyze_video(file: UploadFile = File(...)):
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
 
-    # Calculate overall label based on defect frames
-    is_fake = len(defect_frames) > 0
+    # Calculate overall label based on analysis
+    if len(all_scores) > 0:
+        avg_fake_score = sum(all_scores) / len(all_scores)
+        is_fake = avg_fake_score > 0.5
+    else:
+        avg_fake_score = 0.0
+        is_fake = False
+        
     label = "FAKE" if is_fake else "REAL"
-    confidence = 0.85 if is_fake else 0.9
+    confidence = round(avg_fake_score if is_fake else 1.0 - avg_fake_score, 4)
 
     response = {
         "prediction": label,

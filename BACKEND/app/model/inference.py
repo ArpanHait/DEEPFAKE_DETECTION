@@ -1,18 +1,28 @@
-import torch
-from app.model.load_model import get_model
-
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-MODEL_PATH = "app/model/weights/model.pth"
-
-model = get_model(MODEL_PATH)
+from PIL import Image
+from app.model.load_model import get_classifier
 
 
-def predict_image(input_tensor):
-    input_tensor = input_tensor.to(DEVICE)
+def predict_image(image: Image.Image) -> dict:
+    """
+    Accepts a PIL Image (face crop or full image).
+    Returns a dict with:
+        - label: "REAL" or "FAKE"
+        - score: float confidence (0.0 to 1.0)
+    """
+    classifier = get_classifier()
+    results = classifier(image)
 
-    with torch.no_grad():
-        output = model(input_tensor)
-        prob = torch.sigmoid(output).item()
+    # results is a list like:
+    # [{'label': 'Real', 'score': 0.92}, {'label': 'Fake', 'score': 0.08}]
+    best = results[0]  # highest confidence result
 
-    return prob
+    # Normalize label to uppercase
+    label = best["label"].upper()
+    if label not in ("REAL", "FAKE"):
+        # Fallback: treat anything not "REAL" as "FAKE"
+        label = "FAKE" if "fake" in best["label"].lower() else "REAL"
+
+    return {
+        "label": label,
+        "score": round(best["score"], 4)
+    }
