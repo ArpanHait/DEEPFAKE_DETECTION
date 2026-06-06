@@ -6,6 +6,15 @@ import uvicorn
 import time
 import io
 import random
+import tempfile
+import os
+import cv2
+import librosa
+import numpy as np
+import base64
+import requests
+from bs4 import BeautifulSoup
+from urllib.parse import urlparse
 from PIL import Image
 
 # Internal modules
@@ -111,28 +120,80 @@ def analyze_image(file: UploadFile = File(...)):
 # 2. Video Analysis Endpoint
 # --------------------------------------------------
 @app.post("/analyze/video")
-def analyze_video(file: UploadFile = File(...)):
+async def analyze_video(file: UploadFile = File(...)):
     start_time = time.time()
     
     if not file.content_type.startswith("video/"):
         raise HTTPException(status_code=400, detail="Invalid file type. Must be video.")
     
-    # Mock Processing Time
-    time.sleep(1.5)
-    
-    # Mock Response
-    score = random.uniform(0.65, 0.95)
-    label = "FAKE" if score > 0.5 else "REAL"
-    
-    defect_frames = [
-        {"timestamp": "00:02.400", "reason": "Temporal flickering detected"},
-        {"timestamp": "00:05.150", "reason": "Facial landmark jitter"},
-        {"timestamp": "00:08.800", "reason": "Sub-pixel blending error"}
-    ] if label == "FAKE" else []
+    # Save upload to a temporary file
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
+            contents = await file.read()
+            tmp.write(contents)
+            tmp_path = tmp.name
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Could not save temporary video file")
+
+    defect_frames = []
+    try:
+        cap = cv2.VideoCapture(tmp_path)
+        if not cap.isOpened():
+            raise HTTPException(status_code=400, detail="Could not open video file.")
+
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        if fps <= 0:
+            fps = 24.0
+
+        # Process ~2 frames per second
+        frame_interval = max(1, int(fps / 2))
+        
+        current_frame = 0
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            
+            if current_frame % frame_interval == 0:
+                # Convert BGR to RGB for PIL
+                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                pil_image = Image.fromarray(rgb_frame)
+                
+                # Extract face and predict
+                face = extract_face(pil_image)
+                if face is not None:
+                    input_tensor = preprocess_image(face)
+                    try:
+                        score = predict_image(input_tensor)
+                        if score > 0.5:
+                            # Flagged frame
+                            timestamp = current_frame / fps
+                            # Encode frame to base64
+                            _, buffer = cv2.imencode('.jpg', frame)
+                            frame_b64 = base64.b64encode(buffer).decode('utf-8')
+                            
+                            defect_frames.append({
+                                "timestamp": f"{int(timestamp // 60):02d}:{timestamp % 60:06.3f}",
+                                "reason": "Manipulated face detected",
+                                "frame_base64": f"data:image/jpeg;base64,{frame_b64}"
+                            })
+                    except Exception:
+                        pass # Ignore frames where inference fails
+            current_frame += 1
+            
+        cap.release()
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+    # Calculate overall label based on defect frames
+    is_fake = len(defect_frames) > 0
+    label = "FAKE" if is_fake else "REAL"
+    confidence = 0.85 if is_fake else 0.9
 
     response = {
         "prediction": label,
-        "confidence": round(score if label == 'FAKE' else 1-score, 4),
+        "confidence": confidence,
         "processing_time_ms": round((time.time() - start_time) * 1000, 2),
         "defect_frames": defect_frames
     }
@@ -143,27 +204,81 @@ def analyze_video(file: UploadFile = File(...)):
 # 3. Audio Analysis Endpoint
 # --------------------------------------------------
 @app.post("/analyze/audio")
-def analyze_audio(file: UploadFile = File(...)):
+async def analyze_audio(file: UploadFile = File(...)):
     start_time = time.time()
     
     if not file.content_type.startswith("audio/") and file.content_type not in ["video/mp4", "video/webm"]:
-        # sometimes browsers send audio as video/mp4 depending on container
         pass
+
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+            contents = await file.read()
+            tmp.write(contents)
+            tmp_path = tmp.name
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Could not save temporary audio file")
+
+    manipulated_segments = []
+    try:
+        y, sr = librosa.load(tmp_path, sr=16000)
         
-    # Mock Processing
-    time.sleep(1.0)
-    
-    score = random.uniform(0.7, 0.98)
-    label = "FAKE" if score > 0.5 else "REAL"
-    
-    manipulated_segments = [
-        {"start": "00:01.2", "end": "00:03.5", "reason": "Unnatural prosody transition"},
-        {"start": "00:10.0", "end": "00:12.8", "reason": "Frequency phase artifact (Vocoder signature)"}
-    ] if label == "FAKE" else []
+        # Compute MFCCs and Spectral Centroids
+        mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
+        centroids = librosa.feature.spectral_centroid(y=y, sr=sr)
+        
+        # Heuristic anomaly detection
+        hop_length = 512
+        frame_times = librosa.frames_to_time(np.arange(mfccs.shape[1]), sr=sr, hop_length=hop_length)
+        
+        # Unnatural discontinuities in spectral centroid
+        centroid_diff = np.abs(np.diff(centroids[0]))
+        mean_diff = np.mean(centroid_diff)
+        std_diff = np.std(centroid_diff)
+        
+        threshold = mean_diff + 3 * std_diff
+        anomaly_indices = np.where(centroid_diff > threshold)[0]
+        
+        if len(anomaly_indices) > 0:
+            current_start = anomaly_indices[0]
+            current_end = anomaly_indices[0]
+            
+            for idx in anomaly_indices[1:]:
+                if idx - current_end < 10:
+                    current_end = idx
+                else:
+                    if current_end - current_start > 0:
+                        start_t = frame_times[current_start]
+                        end_t = frame_times[current_end + 1]
+                        manipulated_segments.append({
+                            "start": f"{int(start_t // 60):02d}:{start_t % 60:04.1f}",
+                            "end": f"{int(end_t // 60):02d}:{end_t % 60:04.1f}",
+                            "reason": "Unnatural spectral phase discontinuity"
+                        })
+                    current_start = idx
+                    current_end = idx
+            
+            if current_end - current_start > 0:
+                start_t = frame_times[current_start]
+                end_t = min(frame_times[current_end + 1], frame_times[-1])
+                manipulated_segments.append({
+                    "start": f"{int(start_t // 60):02d}:{start_t % 60:04.1f}",
+                    "end": f"{int(end_t // 60):02d}:{end_t % 60:04.1f}",
+                    "reason": "Unnatural spectral phase discontinuity"
+                })
+
+    except Exception as e:
+        print(f"Audio processing error: {e}")
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+    is_fake = len(manipulated_segments) > 0
+    label = "FAKE" if is_fake else "REAL"
+    confidence = 0.85 if is_fake else 0.9
 
     response = {
         "prediction": label,
-        "confidence": round(score if label == 'FAKE' else 1-score, 4),
+        "confidence": confidence,
         "processing_time_ms": round((time.time() - start_time) * 1000, 2),
         "manipulated_segments": manipulated_segments
     }
@@ -181,21 +296,66 @@ def analyze_website(request: WebsiteRequest):
     if not url.startswith("http"):
         url = "https://" + url
         
-    # Mock Processing
-    time.sleep(2.0)
+    spoofed_elements = []
     
-    score = random.uniform(0.75, 0.99)
-    label = "FAKE" if score > 0.5 else "REAL"
+    parsed_url = urlparse(url)
+    domain = parsed_url.netloc.lower()
     
-    spoofed_elements = [
-        {"element": "<form id='login-box'>", "issue": "Form action posts to suspicious external domain (http://evil-phish.net/submit)"},
-        {"element": "<div class='bank-logo'>", "issue": "Logo matches known target (Chase Bank) but domain is mismatched."},
-        {"element": "<script src='...'>", "issue": "Obfuscated credential harvesting script detected."}
-    ] if label == "FAKE" else []
+    suspicious_keywords = ["login", "secure", "verify", "banking", "account", "update"]
+    for keyword in suspicious_keywords:
+        if keyword in domain:
+            spoofed_elements.append({
+                "element": "URL Domain",
+                "issue": f"Suspicious keyword '{keyword}' found in domain name"
+            })
+            
+    if len(domain.split('.')) > 3:
+        spoofed_elements.append({
+            "element": "URL Structure",
+            "issue": "Unusually high number of subdomains detected (potential phishing structure)"
+        })
+
+    try:
+        response = requests.get(url, timeout=5, headers={"User-Agent": "Mozilla/5.0"})
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            forms = soup.find_all('form')
+            for form in forms:
+                action = form.get('action')
+                if action and action.startswith("http"):
+                    form_domain = urlparse(action).netloc.lower()
+                    if form_domain and form_domain != domain:
+                        spoofed_elements.append({
+                            "element": str(form)[:100] + "...",
+                            "issue": f"Form posts data to a different external domain: {form_domain}"
+                        })
+            
+            scripts = soup.find_all('script')
+            external_scripts = [s.get('src') for s in scripts if s.get('src') and s.get('src').startswith("http")]
+            suspicious_script_domains = ["ngrok.io", "herokuapp.com", "pastebin.com"]
+            for src in external_scripts:
+                src_domain = urlparse(src).netloc.lower()
+                for sus in suspicious_script_domains:
+                    if sus in src_domain:
+                        spoofed_elements.append({
+                            "element": f"<script src='{src}'>",
+                            "issue": f"Loads script from known suspicious/temporary host: {sus}"
+                        })
+
+    except Exception as e:
+        spoofed_elements.append({
+            "element": "Network Request",
+            "issue": f"Failed to fetch website or timed out: {str(e)}"
+        })
+        
+    is_fake = len(spoofed_elements) > 0
+    label = "FAKE" if is_fake else "REAL"
+    confidence = 0.9 if is_fake else 0.95
 
     response = {
         "prediction": label,
-        "confidence": round(score if label == 'FAKE' else 1-score, 4),
+        "confidence": confidence,
         "processing_time_ms": round((time.time() - start_time) * 1000, 2),
         "url_scanned": url,
         "spoofed_elements": spoofed_elements
