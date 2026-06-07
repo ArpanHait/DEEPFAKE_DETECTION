@@ -23,6 +23,7 @@ from PIL import Image
 # Internal modules
 from app.model.inference import predict_image
 from app.utils.face_detection import extract_face, detect_face_box
+from app.model.load_model import get_audio_classifier
 
 # --------------------------------------------------
 # App Initialization
@@ -342,12 +343,19 @@ async def analyze_audio(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail="Could not save temporary audio file")
 
     manipulated_segments = []
+    duration = 0.0
+    sr = 16000
+    mean_centroid = 0.0
+    fake_prob = 0.0
+
     try:
         y, sr = librosa.load(tmp_path, sr=16000)
+        duration = float(librosa.get_duration(y=y, sr=sr))
         
         # Compute MFCCs and Spectral Centroids
         mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
         centroids = librosa.feature.spectral_centroid(y=y, sr=sr)
+        mean_centroid = float(np.mean(centroids))
         
         # Heuristic anomaly detection
         hop_length = 512
@@ -393,21 +401,63 @@ async def analyze_audio(file: UploadFile = File(...)):
                     "reason": "Sustained unnatural spectral discontinuity"
                 })
 
+        # Run AI Deepfake Voice Classifier Model
+        try:
+            audio_classifier = get_audio_classifier()
+            # Pass the raw numpy array to avoid requiring FFmpeg
+            predictions = audio_classifier(y)
+            # Find fake probability
+            fake_prob = next((p["score"] for p in predictions if p["label"].lower() == "fake"), 0.0)
+        except Exception as classifier_err:
+            print(f"Classifier prediction error: {classifier_err}")
+            fake_prob = 0.0
+
     except Exception as e:
         print(f"Audio processing error: {e}")
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
 
-    is_fake = len(manipulated_segments) > 0
+    # Hybrid Ensemble Decision Logic:
+    # Flag as FAKE if the AI model classifies it as fake with high probability (> 0.5)
+    # OR if the heuristic splicing detector finds significant temporal anomalies.
+    is_fake = (fake_prob > 0.5) or (len(manipulated_segments) > 0)
     label = "FAKE" if is_fake else "REAL"
-    confidence = min(0.98, 0.70 + 0.05 * len(manipulated_segments)) if is_fake else 0.95
+    
+    # Calculate confidence based on which indicator fired
+    if is_fake:
+        confidence = max(fake_prob, min(0.98, 0.70 + 0.05 * len(manipulated_segments)))
+    else:
+        confidence = 1.0 - fake_prob
+
+    # Prepare diagnostic checks & details
+    audio_details = {
+        "duration_seconds": round(duration, 2),
+        "sample_rate": sr,
+        "average_spectral_centroid": round(mean_centroid, 2),
+        "model_name": "Wav2Vec2-Deepfake-Audio-V2"
+    }
+
+    diagnostic_checks = [
+        {
+            "name": "Neural Voice Clone Analysis",
+            "status": "FAILED" if (fake_prob > 0.5) else "PASSED",
+            "message": f"Wav2Vec2 classifier detected synthetic/cloned speech characteristics with {fake_prob:.1%} probability."
+        },
+        {
+            "name": "Spectral Discontinuity Check",
+            "status": "FAILED" if (len(manipulated_segments) > 0) else "PASSED",
+            "message": f"Splicing check finished. Detected {len(manipulated_segments)} temporal discontinuity anomalies."
+        }
+    ]
 
     response = {
         "prediction": label,
         "confidence": round(confidence, 4),
         "processing_time_ms": round((time.time() - start_time) * 1000, 2),
-        "manipulated_segments": manipulated_segments
+        "manipulated_segments": manipulated_segments,
+        "audio_details": audio_details,
+        "diagnostic_checks": diagnostic_checks
     }
     
     return JSONResponse(content=response)

@@ -8,6 +8,7 @@ from PIL import Image
 # --------------------------------------------------
 
 _classifier = None
+_audio_classifier = None
 
 
 def get_classifier():
@@ -25,3 +26,21 @@ def get_classifier():
         )
         print("Model loaded successfully.")
     return _classifier
+
+
+def get_audio_classifier():
+    """
+    Returns a singleton HuggingFace audio-classification pipeline
+    trained on Real vs Fake audio detection.
+    """
+    global _audio_classifier
+    if _audio_classifier is None:
+        print("Loading HuggingFace Wav2Vec2 deepfake audio detection model...")
+        _audio_classifier = pipeline(
+            "audio-classification",
+            model="MelodyMachine/Deepfake-audio-detection-V2",
+            device=-1  # CPU (-1).
+        )
+        print("Audio model loaded successfully.")
+    return _audio_classifier
+

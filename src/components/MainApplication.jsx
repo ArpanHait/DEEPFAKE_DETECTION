@@ -366,7 +366,7 @@ const MainApplication = ({ onBack }) => {
             </div>
 
             {/* Granular Evidence View */}
-            {(isFake || activeMode === 'website' || activeMode === 'image') && (
+            {(isFake || activeMode === 'website' || activeMode === 'image' || activeMode === 'audio') && (
               <div className={`w-full bg-slate-900/50 border rounded-3xl p-8 transition-all duration-500 ${
                 isFake ? 'border-slate-700/50' : 'border-green-800/40 shadow-[0_0_50px_rgba(34,197,94,0.08)]'
               }`}>
@@ -386,10 +386,10 @@ const MainApplication = ({ onBack }) => {
                     <div className="relative rounded-xl overflow-hidden border border-slate-700 flex justify-center items-center bg-black/50 p-4 min-h-[300px]">
                       <div className="relative" style={{ width: imageDimensions.width || 'auto', height: imageDimensions.height || 'auto' }}>
                         <img 
-                          src={previewUrl} 
-                          alt="Analyzed" 
-                          onLoad={handleImageLoad}
-                          className="max-h-[400px] object-contain opacity-70" 
+                           src={previewUrl} 
+                           alt="Analyzed" 
+                           onLoad={handleImageLoad}
+                           className="max-h-[400px] object-contain opacity-70" 
                         />
                         {/* Red Manipulation Bounding Boxes (for FAKE) */}
                         {isFake && imageDimensions.width > 0 && predictionResult.original_width && (
@@ -535,17 +535,87 @@ const MainApplication = ({ onBack }) => {
 
                 {/* AUDIO EVIDENCE */}
                 {activeMode === 'audio' && (
-                  <div className="space-y-6">
-                    <h4 className="text-red-400 font-semibold uppercase text-sm tracking-wider">Manipulated Vocal Segments</h4>
-                    <div className="space-y-3">
-                      {predictionResult.manipulated_segments?.map((seg, i) => (
-                        <div key={i} className="flex items-center gap-4 bg-red-950/30 border border-red-900/50 rounded-xl p-4">
-                          <div className="px-3 py-1 bg-red-900/50 rounded-md text-red-300 font-mono text-sm">
-                            {seg.start} - {seg.end}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                    {/* Left Column: Audio Profile Card */}
+                    {predictionResult.audio_details && (
+                      <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden">
+                        <div className="absolute top-0 right-0 w-40 h-40 bg-emerald-500/5 rounded-full blur-2xl pointer-events-none"></div>
+                        <h4 className="text-slate-300 font-bold uppercase text-sm tracking-wider flex items-center gap-2 mb-6 border-b border-slate-800 pb-3">
+                          <FileAudio className="w-5 h-5 text-emerald-400" /> Audio Scan Profile
+                        </h4>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 font-mono text-xs text-slate-400">
+                          <div>
+                            <span className="text-[10px] text-slate-500 uppercase block mb-1">Vocal Duration</span>
+                            <span className="text-white font-semibold text-sm">{predictionResult.audio_details.duration_seconds} seconds</span>
                           </div>
-                          <span className="text-slate-300 text-sm flex-1">{seg.reason}</span>
+                          <div>
+                            <span className="text-[10px] text-slate-500 uppercase block mb-1">Sample Rate</span>
+                            <span className="text-emerald-400 font-semibold text-sm">{predictionResult.audio_details.sample_rate} Hz</span>
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-slate-500 uppercase block mb-1">Mean Spectral Centroid</span>
+                            <span className="text-purple-400 font-semibold text-sm">{predictionResult.audio_details.average_spectral_centroid} Hz</span>
+                          </div>
+                          <div>
+                            <span className="text-[10px] text-slate-500 uppercase block mb-1">Analysis Model</span>
+                            <span className="text-blue-400 font-semibold text-sm">{predictionResult.audio_details.model_name}</span>
+                          </div>
                         </div>
-                      ))}
+                      </div>
+                    )}
+
+                    {/* Right Column: Scan Diagnostics & Manipulated Segments */}
+                    <div className="space-y-6">
+                      {/* Diagnostic Scan Logs */}
+                      {predictionResult.diagnostic_checks && predictionResult.diagnostic_checks.length > 0 && (
+                        <div className="space-y-4">
+                          <h4 className="text-slate-300 font-semibold uppercase text-sm tracking-wider flex items-center gap-2">
+                            <Activity className="w-4 h-4 text-emerald-400" /> Acoustic Consistency Logs
+                          </h4>
+                          <div className="space-y-3">
+                            {predictionResult.diagnostic_checks.map((item, i) => {
+                              const isPassed = item.status === "PASSED";
+                              return (
+                                <div key={i} className={`border rounded-xl p-4 flex gap-4 items-start ${
+                                  isPassed ? 'bg-green-950/10 border-green-900/30' : 'bg-red-950/15 border-red-900/40'
+                                }`}>
+                                  <div className={`p-2 rounded-lg shrink-0 ${
+                                    isPassed ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'
+                                  }`}>
+                                    {isPassed ? <ShieldCheck className="w-5 h-5" /> : <AlertOctagon className="w-5 h-5" />}
+                                  </div>
+                                  <div className="flex-1">
+                                    <span className={`block font-semibold mb-1 text-sm ${
+                                      isPassed ? 'text-green-400' : 'text-red-400'
+                                    }`}>{item.name}</span>
+                                    <p className="text-slate-300 text-xs leading-relaxed">{item.message}</p>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Flagged Manipulated Vocal Segments */}
+                      {isFake && predictionResult.manipulated_segments && predictionResult.manipulated_segments.length > 0 && (
+                        <div className="space-y-4">
+                          <h4 className="text-red-400 font-semibold uppercase text-sm tracking-wider flex items-center gap-2">
+                            <AlertOctagon className="w-4 h-4" /> Flagged Temporal Discontinuities
+                          </h4>
+                          <div className="space-y-3">
+                            {predictionResult.manipulated_segments.map((seg, i) => (
+                              <div key={i} className="flex items-center gap-4 bg-red-950/20 border border-red-900/40 rounded-xl p-4 hover:bg-red-950/30 transition-colors">
+                                <div className="px-3 py-1 bg-red-900/50 rounded-md text-red-300 font-mono text-sm">
+                                  {seg.start} - {seg.end}
+                                </div>
+                                <span className="text-slate-300 text-sm flex-1">{seg.reason}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
