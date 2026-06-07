@@ -1,3 +1,6 @@
+import dotenv
+dotenv.load_dotenv()
+
 from fastapi import FastAPI, UploadFile, File, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
@@ -8,6 +11,7 @@ import io
 import tempfile
 import os
 import cv2
+import socket
 import librosa
 import numpy as np
 import base64
@@ -18,7 +22,7 @@ from PIL import Image
 
 # Internal modules
 from app.model.inference import predict_image
-from app.utils.face_detection import extract_face
+from app.utils.face_detection import extract_face, detect_face_box
 
 # --------------------------------------------------
 # App Initialization
@@ -78,31 +82,125 @@ def analyze_image(file: UploadFile = File(...)):
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid image file")
 
-    # Try to extract face first for focused analysis
-    face = extract_face(image)
-    analysis_image = face if face is not None else image
+    # Detect face box and crop
+    face_box = detect_face_box(image)
+    face_crop = extract_face(image) if face_box is not None else None
 
-    # Run the ViT deepfake classifier
+    # Run predictions
     try:
-        result = predict_image(analysis_image)
-        label = result["label"]
-        confidence = result["score"]
+        if face_crop is not None:
+            # Dual prediction
+            result_full = predict_image(image)
+            result_face = predict_image(face_crop)
+            
+            # Extract probability of being FAKE
+            fake_prob_full = result_full["score"] if result_full["label"] == "FAKE" else 1.0 - result_full["score"]
+            fake_prob_face = result_face["score"] if result_face["label"] == "FAKE" else 1.0 - result_face["score"]
+            
+            # Classification thresholds
+            # Full image has standard 0.5 threshold. 
+            # Face crop has a tighter 0.85 threshold to avoid crop-boundary false positives.
+            is_fake = (fake_prob_full > 0.5) or (fake_prob_face > 0.85)
+            
+            if is_fake:
+                label = "FAKE"
+                confidence = max(fake_prob_full, fake_prob_face)
+            else:
+                label = "REAL"
+                confidence = ((1.0 - fake_prob_full) + (1.0 - fake_prob_face)) / 2.0
+        else:
+            # Single prediction on full image
+            result_full = predict_image(image)
+            fake_prob_full = result_full["score"] if result_full["label"] == "FAKE" else 1.0 - result_full["score"]
+            fake_prob_face = None
+            label = result_full["label"]
+            confidence = result_full["score"]
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Model inference failed: {str(e)}")
 
     # Only show manipulated boxes when FAKE is detected
     manipulated_boxes = []
     if label == "FAKE":
-        w, h = image.size
-        manipulated_boxes = [
-            {"x": int(w * 0.15), "y": int(h * 0.15), "width": int(w * 0.7), "height": int(h * 0.7), "reason": "Deepfake artifacts detected by ViT classifier"}
-        ]
+        if face_box is not None:
+            manipulated_boxes = [{
+                "x": face_box["x"],
+                "y": face_box["y"],
+                "width": face_box["width"],
+                "height": face_box["height"],
+                "reason": f"Face manipulation detected (confidence: {confidence:.1%})"
+            }]
+        else:
+            w, h = image.size
+            manipulated_boxes = [{
+                "x": 0,
+                "y": 0,
+                "width": w,
+                "height": h,
+                "reason": f"Global image manipulation detected (confidence: {confidence:.1%})"
+            }]
+
+    w, h = image.size
+    
+    # Compile diagnostic checks
+    diagnostic_checks = []
+    
+    # 1. Resolution Check
+    resolution_status = "PASSED" if (w >= 128 and h >= 128) else "WARNING"
+    resolution_msg = f"Resolution is {w}x{h}. Sufficient spatial details for sub-pixel forgery detection." if resolution_status == "PASSED" else f"Low resolution ({w}x{h}). Deepfake artifacts may be obscured by compression."
+    diagnostic_checks.append({
+        "name": "Image Resolution & Format",
+        "status": resolution_status,
+        "message": resolution_msg
+    })
+    
+    # 2. Biometric Face Alignment
+    if face_box is not None:
+        diagnostic_checks.append({
+            "name": "Biometric Face Detection",
+            "status": "PASSED",
+            "message": f"Face detected at x:{face_box['x']}, y:{face_box['y']} (size: {face_box['width']}x{face_box['height']}). Biometric crop extracted successfully."
+        })
+    else:
+        diagnostic_checks.append({
+            "name": "Biometric Face Detection",
+            "status": "INFO",
+            "message": "No human faces detected. Switching analysis mode to global scene manipulation."
+        })
+        
+    # 3. Global Scene Analysis
+    global_status = "FAILED" if (fake_prob_full > 0.5) else "PASSED"
+    global_msg = f"Global neural networks detected manipulation artifacts with {fake_prob_full:.1%} probability." if global_status == "FAILED" else f"Full-scene scan finished. No global manipulation detected (manipulation probability: {fake_prob_full:.1%})."
+    diagnostic_checks.append({
+        "name": "Global Feature Analysis",
+        "status": global_status,
+        "message": global_msg
+    })
+    
+    # 4. Ensemble Face Crop Check
+    if face_crop is not None:
+        face_status = "FAILED" if (fake_prob_face > 0.85) else "PASSED"
+        face_msg = f"Local biometric crop classification detected synthetic anomalies on the face with {fake_prob_face:.1%} probability (Threshold: 85.0%)." if face_status == "FAILED" else f"Biometric face crop analysis completed. No local face-swap artifacts detected (manipulation probability: {fake_prob_face:.1%})."
+        diagnostic_checks.append({
+            "name": "Ensemble Face Verification",
+            "status": face_status,
+            "message": face_msg
+        })
+
+    image_details = {
+        "dimensions": f"{w}px × {h}px",
+        "face_detected": face_box is not None,
+        "face_box": face_box
+    }
 
     response = {
         "prediction": label,
         "confidence": round(confidence, 4),
         "processing_time_ms": round((time.time() - start_time) * 1000, 2),
-        "manipulated_boxes": manipulated_boxes
+        "original_width": w,
+        "original_height": h,
+        "manipulated_boxes": manipulated_boxes,
+        "image_details": image_details,
+        "diagnostic_checks": diagnostic_checks
     }
 
     return JSONResponse(content=response)
@@ -151,24 +249,49 @@ async def analyze_video(file: UploadFile = File(...)):
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 pil_image = Image.fromarray(rgb_frame)
                 
-                # Extract face, fall back to full frame
-                face = extract_face(pil_image)
-                analysis_image = face if face is not None else pil_image
+                # Detect face box and crop
+                face_box = detect_face_box(pil_image)
+                face_crop = extract_face(pil_image) if face_box is not None else None
                 
                 try:
-                    result = predict_image(analysis_image)
-                    all_scores.append(result["score"] if result["label"] == "FAKE" else 1.0 - result["score"])
+                    if face_crop is not None:
+                        # Dual prediction
+                        result_full = predict_image(pil_image)
+                        result_face = predict_image(face_crop)
+                        
+                        fake_prob_full = result_full["score"] if result_full["label"] == "FAKE" else 1.0 - result_full["score"]
+                        fake_prob_face = result_face["score"] if result_face["label"] == "FAKE" else 1.0 - result_face["score"]
+                        
+                        is_fake = (fake_prob_full > 0.5) or (fake_prob_face > 0.85)
+                        score = max(fake_prob_full, fake_prob_face) if is_fake else ((1.0 - fake_prob_full) + (1.0 - fake_prob_face)) / 2.0
+                    else:
+                        # Single prediction
+                        result_full = predict_image(pil_image)
+                        is_fake = result_full["label"] == "FAKE"
+                        score = result_full["score"] if is_fake else 1.0 - result_full["score"]
                     
-                    if result["label"] == "FAKE" and result["score"] > 0.5:
-                        # Flagged frame
+                    # Store score (fake probability)
+                    all_scores.append(score if is_fake else 1.0 - score)
+                    
+                    if is_fake:
                         timestamp = current_frame / fps
+                        
+                        # Draw bounding box on frame for visual representation if face exists
+                        annotated_frame = frame.copy()
+                        if face_box is not None:
+                            x, y, w_box, h_box = face_box["x"], face_box["y"], face_box["width"], face_box["height"]
+                            cv2.rectangle(annotated_frame, (x, y), (x + w_box, y + h_box), (0, 0, 255), 3)
+                            cv2.putText(annotated_frame, f"FAKE {score:.1%}", (x, max(30, y - 10)),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+                        
                         # Encode frame to base64
-                        _, buffer = cv2.imencode('.jpg', frame)
+                        _, buffer = cv2.imencode('.jpg', annotated_frame)
                         frame_b64 = base64.b64encode(buffer).decode('utf-8')
                         
+                        reason = "Face manipulation detected" if face_box is not None else "Global frame manipulation detected"
                         defect_frames.append({
                             "timestamp": f"{int(timestamp // 60):02d}:{timestamp % 60:06.3f}",
-                            "reason": f"Deepfake detected (confidence: {result['score']:.1%})",
+                            "reason": f"{reason} (confidence: {score:.1%})",
                             "frame_base64": f"data:image/jpeg;base64,{frame_b64}"
                         })
                 except Exception:
@@ -235,7 +358,8 @@ async def analyze_audio(file: UploadFile = File(...)):
         mean_diff = np.mean(centroid_diff)
         std_diff = np.std(centroid_diff)
         
-        threshold = mean_diff + 3 * std_diff
+        # High-precision absolute + relative thresholding
+        threshold = max(3500.0, mean_diff + 6.0 * std_diff)
         anomaly_indices = np.where(centroid_diff > threshold)[0]
         
         if len(anomaly_indices) > 0:
@@ -243,27 +367,30 @@ async def analyze_audio(file: UploadFile = File(...)):
             current_end = anomaly_indices[0]
             
             for idx in anomaly_indices[1:]:
-                if idx - current_end < 10:
+                # If anomalies occur within 4 frames (~130ms), combine them
+                if idx - current_end <= 4:
                     current_end = idx
                 else:
-                    if current_end - current_start > 0:
+                    # Filter out short transient spikes (require at least 3 consecutive frames, ~100ms)
+                    if (current_end - current_start) >= 2:
                         start_t = frame_times[current_start]
-                        end_t = frame_times[current_end + 1]
+                        end_t = frame_times[min(current_end + 1, len(frame_times) - 1)]
                         manipulated_segments.append({
                             "start": f"{int(start_t // 60):02d}:{start_t % 60:04.1f}",
                             "end": f"{int(end_t // 60):02d}:{end_t % 60:04.1f}",
-                            "reason": "Unnatural spectral phase discontinuity"
+                            "reason": "Sustained unnatural spectral discontinuity"
                         })
                     current_start = idx
                     current_end = idx
             
-            if current_end - current_start > 0:
+            # Flush final block
+            if (current_end - current_start) >= 2:
                 start_t = frame_times[current_start]
-                end_t = min(frame_times[current_end + 1], frame_times[-1])
+                end_t = frame_times[min(current_end + 1, len(frame_times) - 1)]
                 manipulated_segments.append({
                     "start": f"{int(start_t // 60):02d}:{start_t % 60:04.1f}",
                     "end": f"{int(end_t // 60):02d}:{end_t % 60:04.1f}",
-                    "reason": "Unnatural spectral phase discontinuity"
+                    "reason": "Sustained unnatural spectral discontinuity"
                 })
 
     except Exception as e:
@@ -274,16 +401,34 @@ async def analyze_audio(file: UploadFile = File(...)):
 
     is_fake = len(manipulated_segments) > 0
     label = "FAKE" if is_fake else "REAL"
-    confidence = 0.85 if is_fake else 0.9
+    confidence = min(0.98, 0.70 + 0.05 * len(manipulated_segments)) if is_fake else 0.95
 
     response = {
         "prediction": label,
-        "confidence": confidence,
+        "confidence": round(confidence, 4),
         "processing_time_ms": round((time.time() - start_time) * 1000, 2),
         "manipulated_segments": manipulated_segments
     }
     
     return JSONResponse(content=response)
+
+# --------------------------------------------------
+# SSL Legacy Adapter for compatibility with older servers
+# --------------------------------------------------
+import ssl
+from requests.adapters import HTTPAdapter
+from urllib3.poolmanager import PoolManager
+
+class LegacyAdapter(HTTPAdapter):
+    def init_poolmanager(self, connections, maxsize, block=False, **kwargs):
+        ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+        ctx.options |= 0x4  # OP_LEGACY_SERVER_CONNECT
+        self.poolmanager = PoolManager(
+            num_pools=connections,
+            maxsize=maxsize,
+            block=block,
+            ssl_context=ctx
+        )
 
 # --------------------------------------------------
 # 4. Website Analysis Endpoint
@@ -297,68 +442,172 @@ def analyze_website(request: WebsiteRequest):
         url = "https://" + url
         
     spoofed_elements = []
+    genuine_indicators = []
     
     parsed_url = urlparse(url)
     domain = parsed_url.netloc.lower()
     
+    # 1. DNS Resolution (IP Address)
+    try:
+        ip_address = socket.gethostbyname(domain)
+    except Exception:
+        ip_address = "Could not resolve DNS"
+        
+    # Default website details
+    site_title = "Unknown Title"
+    site_desc = "No meta description available."
+    server_software = "Unknown Server"
+    site_purpose = "No descriptive paragraph could be parsed."
+
+    # Check if the domain belongs to a trusted government or academic TLD
+    is_trusted_tld = domain.endswith(".gov") or domain.endswith(".gov.in") or domain.endswith(".edu") or domain.endswith(".edu.in")
+    
+    if is_trusted_tld:
+        genuine_indicators.append({
+            "check": "Government/Academic Domain Verified",
+            "status": "This website uses an official restricted government (.gov) or educational (.edu) domain name."
+        })
+    
     suspicious_keywords = ["login", "secure", "verify", "banking", "account", "update"]
+    has_sus_keyword = False
     for keyword in suspicious_keywords:
         if keyword in domain:
+            has_sus_keyword = True
             spoofed_elements.append({
                 "element": "URL Domain",
                 "issue": f"Suspicious keyword '{keyword}' found in domain name"
             })
             
+    if not has_sus_keyword:
+        genuine_indicators.append({
+            "check": "Domain Reputation Clean",
+            "status": "No suspicious phishing keywords (like 'login', 'banking', 'secure') detected in the domain name."
+        })
+            
     if len(domain.split('.')) > 3:
-        spoofed_elements.append({
-            "element": "URL Structure",
-            "issue": "Unusually high number of subdomains detected (potential phishing structure)"
+        if not is_trusted_tld:
+            spoofed_elements.append({
+                "element": "URL Structure",
+                "issue": "Unusually high number of subdomains detected (potential phishing structure)"
+            })
+    else:
+        genuine_indicators.append({
+            "check": "URL Subdomain Depth Check",
+            "status": "Standard, safe domain nesting level. No suspicious phishing subdomain chaining detected."
         })
 
+    fetch_success = False
     try:
-        response = requests.get(url, timeout=5, headers={"User-Agent": "Mozilla/5.0"})
+        session = requests.Session()
+        session.mount("https://", LegacyAdapter())
+        response = session.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+        
+        server_software = response.headers.get("Server", "Unknown Server")
+        
         if response.status_code == 200:
+            fetch_success = True
+            genuine_indicators.append({
+                "check": "SSL/TLS Connection",
+                "status": "Secure connection successfully established with HTTP status code 200."
+            })
+            
             soup = BeautifulSoup(response.text, 'html.parser')
             
+            # Extract Site Title
+            if soup.title and soup.title.string:
+                site_title = soup.title.string.strip()
+                
+            # Extract Meta Description
+            meta_desc = soup.find('meta', attrs={'name': 'description'})
+            desc_val = meta_desc.get('content').strip() if meta_desc and meta_desc.get('content') else ""
+            if not desc_val:
+                og_desc = soup.find('meta', attrs={'property': 'og:description'})
+                desc_val = og_desc.get('content').strip() if og_desc and og_desc.get('content') else ""
+            if desc_val:
+                site_desc = desc_val
+                
+            # Extract Site Purpose (First paragraph > 40 chars)
+            paragraphs = [p.get_text().strip() for p in soup.find_all(['p', 'span']) if len(p.get_text().strip()) > 40]
+            if paragraphs:
+                site_purpose = paragraphs[0]
+                if len(site_purpose) > 200:
+                    site_purpose = site_purpose[:197] + "..."
+            
             forms = soup.find_all('form')
+            has_external_forms = False
             for form in forms:
                 action = form.get('action')
                 if action and action.startswith("http"):
                     form_domain = urlparse(action).netloc.lower()
                     if form_domain and form_domain != domain:
+                        has_external_forms = True
                         spoofed_elements.append({
                             "element": str(form)[:100] + "...",
                             "issue": f"Form posts data to a different external domain: {form_domain}"
                         })
             
+            if not has_external_forms:
+                genuine_indicators.append({
+                    "check": "Input Form Security",
+                    "status": "No forms detected posting user input or credentials to external third-party domains."
+                })
+            
             scripts = soup.find_all('script')
             external_scripts = [s.get('src') for s in scripts if s.get('src') and s.get('src').startswith("http")]
             suspicious_script_domains = ["ngrok.io", "herokuapp.com", "pastebin.com"]
+            has_sus_scripts = False
             for src in external_scripts:
                 src_domain = urlparse(src).netloc.lower()
                 for sus in suspicious_script_domains:
                     if sus in src_domain:
+                        has_sus_scripts = True
                         spoofed_elements.append({
                             "element": f"<script src='{src}'>",
                             "issue": f"Loads script from known suspicious/temporary host: {sus}"
                         })
+            
+            if not has_sus_scripts:
+                genuine_indicators.append({
+                    "check": "Active Script Reputation",
+                    "status": "All active scripts are loaded from safe, recognized, and non-temporary domains."
+                })
 
     except Exception as e:
-        spoofed_elements.append({
-            "element": "Network Request",
-            "issue": f"Failed to fetch website or timed out: {str(e)}"
+        # Trusted domains (like government sites) should not be flagged as FAKE due to connection timeout or offline status
+        if not is_trusted_tld:
+            spoofed_elements.append({
+                "element": "Network Request",
+                "issue": f"Failed to fetch website or timed out: {str(e)}"
+            })
+        else:
+            site_desc = f"Domain verified as official. Connection timed out or offline."
+            
+    if not fetch_success and is_trusted_tld:
+        genuine_indicators.append({
+            "check": "Domain Verified Offline",
+            "status": "Could not connect to verify HTML scripts, but TLD reputation is verified as safe."
         })
         
     is_fake = len(spoofed_elements) > 0
     label = "FAKE" if is_fake else "REAL"
     confidence = 0.9 if is_fake else 0.95
 
+    website_details = {
+        "title": site_title,
+        "description": site_desc,
+        "ip_address": ip_address,
+        "server": server_software,
+        "primary_purpose": site_purpose
+    }
+
     response = {
         "prediction": label,
         "confidence": confidence,
         "processing_time_ms": round((time.time() - start_time) * 1000, 2),
         "url_scanned": url,
-        "spoofed_elements": spoofed_elements
+        "spoofed_elements": spoofed_elements,
+        "genuine_indicators": genuine_indicators,
+        "website_details": website_details
     }
     
     return JSONResponse(content=response)

@@ -1,0 +1,17 @@
+# Local environment files
+BACKEND/.env
+
+# Dependency directories
+node_modules/
+dist/
+
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.venv/
+venv/
+ENV/
+env/

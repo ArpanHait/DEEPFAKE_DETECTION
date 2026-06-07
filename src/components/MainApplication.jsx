@@ -22,8 +22,14 @@ const MainApplication = ({ onBack }) => {
   const [previewUrl, setPreviewUrl] = useState('');
   const [fileName, setFileName] = useState('');
   const [targetUrl, setTargetUrl] = useState('');
+  const [imageDimensions, setImageDimensions] = useState({ width: 0, height: 0 });
   
   const fileInputRef = useRef(null);
+
+  const handleImageLoad = (e) => {
+    const { width, height } = e.target.getBoundingClientRect();
+    setImageDimensions({ width, height });
+  };
 
   useEffect(() => {
     return () => {
@@ -360,43 +366,147 @@ const MainApplication = ({ onBack }) => {
             </div>
 
             {/* Granular Evidence View */}
-            {isFake && (
-              <div className="w-full bg-slate-900/50 border border-slate-700/50 rounded-3xl p-8">
+            {(isFake || activeMode === 'website' || activeMode === 'image') && (
+              <div className={`w-full bg-slate-900/50 border rounded-3xl p-8 transition-all duration-500 ${
+                isFake ? 'border-slate-700/50' : 'border-green-800/40 shadow-[0_0_50px_rgba(34,197,94,0.08)]'
+              }`}>
                 <h3 className="text-xl font-bold text-white mb-6 border-b border-slate-700 pb-4 flex items-center gap-2">
-                  <Fingerprint className="text-red-400" /> 
-                  Evidence & Analysis Report
+                  {isFake ? (
+                    <Fingerprint className="text-red-400" />
+                  ) : (
+                    <ShieldCheck className="text-green-400" />
+                  )} 
+                  {isFake ? "Evidence & Analysis Report" : "Trust & Security Report"}
                 </h3>
                 
                 {/* IMAGE EVIDENCE */}
                 {activeMode === 'image' && (
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                    <div className="relative rounded-xl overflow-hidden border border-slate-700 flex justify-center bg-black/50">
-                      <img src={previewUrl} alt="Analyzed" className="max-h-[400px] object-contain opacity-70" />
-                      {predictionResult.manipulated_boxes?.map((box, i) => (
-                        <div 
-                          key={i} 
-                          className="absolute border-2 border-red-500 bg-red-500/20 shadow-[0_0_15px_rgba(239,68,68,0.8)]"
-                          style={{
-                            left: `${box.x}px`,
-                            top: `${box.y}px`,
-                            width: `${box.width}px`,
-                            height: `${box.height}px`
-                          }}
-                        >
-                          <span className="absolute -top-6 left-0 bg-red-500 text-white text-xs px-2 py-1 rounded whitespace-nowrap">
-                            Defect Area {i+1}
-                          </span>
-                        </div>
-                      ))}
+                    {/* Left Column: Image Preview with Bounding Boxes */}
+                    <div className="relative rounded-xl overflow-hidden border border-slate-700 flex justify-center items-center bg-black/50 p-4 min-h-[300px]">
+                      <div className="relative" style={{ width: imageDimensions.width || 'auto', height: imageDimensions.height || 'auto' }}>
+                        <img 
+                          src={previewUrl} 
+                          alt="Analyzed" 
+                          onLoad={handleImageLoad}
+                          className="max-h-[400px] object-contain opacity-70" 
+                        />
+                        {/* Red Manipulation Bounding Boxes (for FAKE) */}
+                        {isFake && imageDimensions.width > 0 && predictionResult.original_width && (
+                          predictionResult.manipulated_boxes?.map((box, i) => {
+                            const scaleX = imageDimensions.width / predictionResult.original_width;
+                            const scaleY = imageDimensions.height / predictionResult.original_height;
+                            return (
+                              <div 
+                                key={i} 
+                                className="absolute border-2 border-red-500 bg-red-500/20 shadow-[0_0_15px_rgba(239,68,68,0.8)] animate-pulse"
+                                style={{
+                                  left: `${box.x * scaleX}px`,
+                                  top: `${box.y * scaleY}px`,
+                                  width: `${box.width * scaleX}px`,
+                                  height: `${box.height * scaleY}px`
+                                }}
+                              >
+                                <span className="absolute -top-6 left-0 bg-red-500 text-white text-xs px-2 py-0.5 rounded whitespace-nowrap font-sans">
+                                  Defect Area {i+1}
+                                </span>
+                              </div>
+                            );
+                          })
+                        )}
+                        {/* Green Biometric Alignment Bounding Box (for REAL with detected face) */}
+                        {!isFake && imageDimensions.width > 0 && predictionResult.original_width && predictionResult.image_details?.face_box && (
+                          (() => {
+                            const box = predictionResult.image_details.face_box;
+                            const scaleX = imageDimensions.width / predictionResult.original_width;
+                            const scaleY = imageDimensions.height / predictionResult.original_height;
+                            return (
+                              <div 
+                                className="absolute border-2 border-emerald-500 bg-emerald-500/10 shadow-[0_0_15px_rgba(16,185,129,0.5)]"
+                                style={{
+                                  left: `${box.x * scaleX}px`,
+                                  top: `${box.y * scaleY}px`,
+                                  width: `${box.width * scaleX}px`,
+                                  height: `${box.height * scaleY}px`
+                                }}
+                              >
+                                <span className="absolute -top-6 left-0 bg-emerald-500 text-white text-xs px-2 py-0.5 rounded whitespace-nowrap font-sans flex items-center gap-1">
+                                  <ShieldCheck className="w-3.5 h-3.5 animate-pulse" /> Face Crop Secured
+                                </span>
+                              </div>
+                            );
+                          })()
+                        )}
+                      </div>
                     </div>
-                    <div className="space-y-4">
-                      <h4 className="text-red-400 font-semibold uppercase text-sm tracking-wider">Detected Anomalies</h4>
-                      {predictionResult.manipulated_boxes?.map((box, i) => (
-                        <div key={i} className="p-4 bg-red-950/30 border border-red-900/50 rounded-xl">
-                          <span className="block text-red-300 font-medium mb-1">Region {i+1} at X:{box.x} Y:{box.y}</span>
-                          <span className="text-slate-400 text-sm">{box.reason || 'Structural anomaly detected by CNN layers.'}</span>
+
+                    {/* Right Column: Scan Diagnostics & Logs */}
+                    <div className="space-y-6">
+                      {/* Image Profile Card */}
+                      {predictionResult.image_details && (
+                        <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden">
+                          <div className="absolute top-0 right-0 w-40 h-40 bg-blue-500/5 rounded-full blur-2xl pointer-events-none"></div>
+                          <h4 className="text-slate-300 font-bold uppercase text-sm tracking-wider flex items-center gap-2 mb-6 border-b border-slate-800 pb-3">
+                            <FileImage className="w-5 h-5 text-blue-400" /> Image Scan Profile
+                          </h4>
+                          
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 font-mono text-xs text-slate-400">
+                            <div>
+                              <span className="text-[10px] text-slate-500 uppercase block mb-1">Dimensions</span>
+                              <span className="text-white font-semibold text-sm">{predictionResult.image_details.dimensions}</span>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-slate-500 uppercase block mb-1">Biometric Lock</span>
+                              <span className="text-emerald-400 font-semibold text-sm">
+                                {predictionResult.image_details.face_detected ? "Verified (Face Extracted)" : "Not Found (Global Only)"}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-slate-500 uppercase block mb-1">Analysis Mode</span>
+                              <span className="text-purple-400 font-semibold text-sm">
+                                {predictionResult.image_details.face_detected ? "Dual-Engine Ensemble" : "Single-Engine Full Scene"}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-slate-500 uppercase block mb-1">Processing Speed</span>
+                              <span className="text-amber-400 font-semibold text-sm">{predictionResult.processing_time_ms} ms</span>
+                            </div>
+                          </div>
                         </div>
-                      ))}
+                      )}
+
+                      {/* Diagnostic Scan Logs */}
+                      {predictionResult.diagnostic_checks && predictionResult.diagnostic_checks.length > 0 && (
+                        <div className="space-y-4">
+                          <h4 className="text-slate-300 font-semibold uppercase text-sm tracking-wider flex items-center gap-2">
+                            <Activity className="w-4 h-4 text-blue-400" /> Neural Network Verification Logs
+                          </h4>
+                          <div className="space-y-3">
+                            {predictionResult.diagnostic_checks.map((item, i) => {
+                              const isPassed = item.status === "PASSED";
+                              const isWarning = item.status === "WARNING";
+                              const isInfo = item.status === "INFO";
+                              return (
+                                <div key={i} className={`border rounded-xl p-4 flex gap-4 items-start ${
+                                  isPassed ? 'bg-green-950/10 border-green-900/30' : isWarning ? 'bg-amber-950/10 border-amber-900/30' : isInfo ? 'bg-blue-950/10 border-blue-900/30' : 'bg-red-950/15 border-red-900/40'
+                                }`}>
+                                  <div className={`p-2 rounded-lg shrink-0 ${
+                                    isPassed ? 'bg-green-500/10 text-green-400' : isWarning ? 'bg-amber-500/10 text-amber-400' : isInfo ? 'bg-blue-500/10 text-blue-400' : 'bg-red-500/10 text-red-400'
+                                  }`}>
+                                    {isPassed || isInfo ? <ShieldCheck className="w-5 h-5" /> : <AlertOctagon className="w-5 h-5" />}
+                                  </div>
+                                  <div className="flex-1">
+                                    <span className={`block font-semibold mb-1 text-sm ${
+                                      isPassed ? 'text-green-400' : isWarning ? 'text-amber-400' : isInfo ? 'text-blue-400' : 'text-red-400'
+                                    }`}>{item.name}</span>
+                                    <p className="text-slate-300 text-xs leading-relaxed">{item.message}</p>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -408,8 +518,12 @@ const MainApplication = ({ onBack }) => {
                     <div className="flex gap-4 overflow-x-auto pb-4">
                       {predictionResult.defect_frames?.map((frame, i) => (
                         <div key={i} className="min-w-[280px] bg-red-950/30 border border-red-900/50 rounded-xl p-4 shrink-0">
-                          <div className="w-full h-32 bg-black/60 rounded-lg mb-3 flex items-center justify-center border border-red-500/30">
-                            <span className="text-red-500/50 font-mono text-sm">[FRAME DATA AT {frame.timestamp}]</span>
+                          <div className="w-full h-32 bg-black/60 rounded-lg mb-3 flex items-center justify-center border border-red-500/30 overflow-hidden">
+                            {frame.frame_base64 ? (
+                              <img src={frame.frame_base64} alt={`Frame at ${frame.timestamp}`} className="w-full h-full object-cover" />
+                            ) : (
+                              <span className="text-red-500/50 font-mono text-sm">[FRAME DATA AT {frame.timestamp}]</span>
+                            )}
                           </div>
                           <span className="block text-red-300 font-mono text-lg mb-1">{frame.timestamp}</span>
                           <span className="text-slate-400 text-sm">{frame.reason}</span>
@@ -436,20 +550,102 @@ const MainApplication = ({ onBack }) => {
                   </div>
                 )}
 
-                {/* WEBSITE EVIDENCE */}
+                {/* WEBSITE EVIDENCE & TRUST REPORT */}
                 {activeMode === 'website' && (
-                  <div className="space-y-6">
-                    <h4 className="text-red-400 font-semibold uppercase text-sm tracking-wider">Spoofed DOM Elements</h4>
-                    <div className="space-y-4">
-                      {predictionResult.spoofed_elements?.map((item, i) => (
-                        <div key={i} className="bg-red-950/30 border border-red-900/50 rounded-xl p-4">
-                          <div className="bg-black/50 p-3 rounded-lg border border-red-500/20 font-mono text-xs text-red-400 mb-3 overflow-x-auto">
-                            {item.element}
+                  <div className="space-y-8">
+                    {/* Website Profile Card */}
+                    {predictionResult.website_details && (
+                      <div className="bg-slate-950/80 border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden">
+                        <div className="absolute top-0 right-0 w-40 h-40 bg-blue-500/5 rounded-full blur-2xl pointer-events-none"></div>
+                        <h4 className="text-slate-300 font-bold uppercase text-sm tracking-wider flex items-center gap-2 mb-6 border-b border-slate-800 pb-3">
+                          <Globe className="w-5 h-5 text-blue-400" /> Website Profile & Metadata
+                        </h4>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                          {/* Left Details */}
+                          <div className="md:col-span-2 space-y-4">
+                            <div>
+                              <span className="text-xs text-slate-500 uppercase font-mono">Site Title</span>
+                              <span className="block text-white text-lg font-bold mt-1 leading-snug">
+                                {predictionResult.website_details.title}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-xs text-slate-500 uppercase font-mono">Meta Description</span>
+                              <span className="block text-slate-300 text-sm mt-1 leading-relaxed">
+                                {predictionResult.website_details.description}
+                              </span>
+                            </div>
+                            {predictionResult.website_details.primary_purpose && (
+                              <div>
+                                <span className="text-xs text-slate-500 uppercase font-mono">Parsed Site Focus</span>
+                                <span className="block text-slate-300 text-sm mt-1 leading-relaxed italic border-l-2 border-blue-500/40 pl-3">
+                                  "{predictionResult.website_details.primary_purpose}"
+                                </span>
+                              </div>
+                            )}
                           </div>
-                          <span className="text-slate-300 text-sm">{item.issue}</span>
+                          
+                          {/* Right Details (Server info) */}
+                          <div className="bg-slate-900/40 border border-slate-800/60 rounded-xl p-4 space-y-4 font-mono text-xs text-slate-400">
+                            <div>
+                              <span className="text-[10px] text-slate-500 uppercase block mb-1">Scanned Host</span>
+                              <span className="text-blue-400 font-semibold text-sm break-all">
+                                {predictionResult.url_scanned ? new URL(predictionResult.url_scanned).hostname : targetUrl}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-slate-500 uppercase block mb-1">IP Address</span>
+                              <span className="text-emerald-400 font-semibold text-sm">{predictionResult.website_details.ip_address}</span>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-slate-500 uppercase block mb-1">Server Software</span>
+                              <span className="text-purple-400 font-semibold text-sm">{predictionResult.website_details.server}</span>
+                            </div>
+                          </div>
                         </div>
-                      ))}
-                    </div>
+                      </div>
+                    )}
+                    {/* Spoofed Elements (Errors/Phishing indicators) */}
+                    {predictionResult.spoofed_elements && predictionResult.spoofed_elements.length > 0 && (
+                      <div className="space-y-4">
+                        <h4 className="text-red-400 font-semibold uppercase text-sm tracking-wider flex items-center gap-2">
+                          <AlertOctagon className="w-4 h-4" /> Spoofed DOM Elements & Risks
+                        </h4>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {predictionResult.spoofed_elements.map((item, i) => (
+                            <div key={i} className="bg-red-950/20 border border-red-900/40 rounded-xl p-5 hover:bg-red-950/30 transition-colors">
+                              <div className="bg-black/50 p-3 rounded-lg border border-red-500/20 font-mono text-xs text-red-400 mb-3 overflow-x-auto">
+                                {item.element}
+                              </div>
+                              <span className="text-slate-300 text-sm font-medium">{item.issue}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Genuine Indicators (Passed security criteria) */}
+                    {predictionResult.genuine_indicators && predictionResult.genuine_indicators.length > 0 && (
+                      <div className="space-y-4">
+                        <h4 className="text-green-400 font-semibold uppercase text-sm tracking-wider flex items-center gap-2">
+                          <ShieldCheck className="w-4 h-4" /> Verified Safety Indicators
+                        </h4>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {predictionResult.genuine_indicators.map((item, i) => (
+                            <div key={i} className="bg-green-950/10 border border-green-900/30 rounded-xl p-5 hover:bg-green-950/20 transition-all flex gap-4 items-start">
+                              <div className="p-2 bg-green-500/10 rounded-lg text-green-400 shrink-0">
+                                <ShieldCheck className="w-5 h-5" />
+                              </div>
+                              <div>
+                                <span className="block text-green-400 font-semibold mb-1 text-base">{item.check}</span>
+                                <span className="text-slate-300 text-sm leading-relaxed">{item.status}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

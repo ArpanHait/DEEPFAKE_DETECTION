@@ -12,3 +12,4 @@ soundfile
 scikit-learn
 requests
 beautifulsoup4
+python-dotenv
