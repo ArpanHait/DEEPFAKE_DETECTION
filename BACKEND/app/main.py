@@ -1,6 +1,17 @@
 import dotenv
 dotenv.load_dotenv()
 
+# DEBUG: Print the true underlying error for transformers import failure
+import sys
+import traceback
+try:
+    print("DEBUG: Attempting to import transformers.pipeline...", file=sys.stderr)
+    from transformers import pipeline
+    print("DEBUG: Successfully imported transformers pipeline!", file=sys.stderr)
+except Exception as e:
+    print("DEBUG: FAILED importing transformers pipeline!", file=sys.stderr)
+    traceback.print_exc(file=sys.stderr)
+
 from fastapi import FastAPI, UploadFile, File, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
