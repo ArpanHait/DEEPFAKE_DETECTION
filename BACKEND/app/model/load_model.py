@@ -9,6 +9,7 @@ from PIL import Image
 
 _classifier = None
 _audio_classifier = None
+_itw_audio_classifier = None
 
 
 def get_classifier():
@@ -43,4 +44,22 @@ def get_audio_classifier():
         )
         print("Audio model loaded successfully.")
     return _audio_classifier
+
+
+def get_itw_audio_classifier():
+    """
+    Returns a singleton HuggingFace audio-classification pipeline
+    trained on In-The-Wild Real vs Fake audio detection.
+    """
+    global _itw_audio_classifier
+    if _itw_audio_classifier is None:
+        print("Loading HuggingFace Wav2Vec2 In-The-Wild deepfake audio detection model...")
+        _itw_audio_classifier = pipeline(
+            "audio-classification",
+            model="abhishtagatya/wav2vec2-base-960h-itw-deepfake",
+            device=-1  # CPU (-1).
+        )
+        print("ITW Audio model loaded successfully.")
+    return _itw_audio_classifier
+
 

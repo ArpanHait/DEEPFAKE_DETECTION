@@ -23,7 +23,7 @@ from PIL import Image
 # Internal modules
 from app.model.inference import predict_image
 from app.utils.face_detection import extract_face, detect_face_box
-from app.model.load_model import get_audio_classifier
+from app.model.load_model import get_audio_classifier, get_itw_audio_classifier
 
 # --------------------------------------------------
 # App Initialization
@@ -346,7 +346,8 @@ async def analyze_audio(file: UploadFile = File(...)):
     duration = 0.0
     sr = 16000
     mean_centroid = 0.0
-    fake_prob = 0.0
+    fake_prob_a = 0.0
+    fake_prob_b = 0.0
 
     try:
         y, sr = librosa.load(tmp_path, sr=16000)
@@ -401,16 +402,39 @@ async def analyze_audio(file: UploadFile = File(...)):
                     "reason": "Sustained unnatural spectral discontinuity"
                 })
 
-        # Run AI Deepfake Voice Classifier Model
+        # Run AI Deepfake Voice Classifier Models in parallel threads
+        import concurrent.futures
+        import torch
+
+        def run_classifier_a():
+            try:
+                clf_a = get_audio_classifier()
+                preds_a = clf_a(y)
+                return next((p["score"] for p in preds_a if p["label"].lower() == "fake"), 0.0)
+            except Exception as e:
+                print(f"Error running MelodyMachine classifier: {e}")
+                return 0.0
+                
+        def run_classifier_b():
+            try:
+                clf_b = get_itw_audio_classifier()
+                preds_b = clf_b(y)
+                return next((p["score"] for p in preds_b if p["label"].lower() in ["fake", "spoof"]), 0.0)
+            except Exception as e:
+                print(f"Error running ITW classifier: {e}")
+                return 0.0
+
         try:
-            audio_classifier = get_audio_classifier()
-            # Pass the raw numpy array to avoid requiring FFmpeg
-            predictions = audio_classifier(y)
-            # Find fake probability
-            fake_prob = next((p["score"] for p in predictions if p["label"].lower() == "fake"), 0.0)
-        except Exception as classifier_err:
-            print(f"Classifier prediction error: {classifier_err}")
-            fake_prob = 0.0
+            with torch.inference_mode():
+                with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                    future_a = executor.submit(run_classifier_a)
+                    future_b = executor.submit(run_classifier_b)
+                    fake_prob_a = future_a.result()
+                    fake_prob_b = future_b.result()
+        except Exception as ensemble_err:
+            print(f"Ensemble execution error: {ensemble_err}")
+            fake_prob_a = 0.0
+            fake_prob_b = 0.0
 
     except Exception as e:
         print(f"Audio processing error: {e}")
@@ -419,30 +443,35 @@ async def analyze_audio(file: UploadFile = File(...)):
             os.remove(tmp_path)
 
     # Hybrid Ensemble Decision Logic:
-    # Flag as FAKE if the AI model classifies it as fake with high probability (> 0.5)
+    # Flag as FAKE if either AI model classifies it as fake with high probability (> 0.5)
     # OR if the heuristic splicing detector finds significant temporal anomalies.
-    is_fake = (fake_prob > 0.5) or (len(manipulated_segments) > 0)
+    is_fake = (fake_prob_a > 0.5) or (fake_prob_b > 0.5) or (len(manipulated_segments) > 0)
     label = "FAKE" if is_fake else "REAL"
     
     # Calculate confidence based on which indicator fired
     if is_fake:
-        confidence = max(fake_prob, min(0.98, 0.70 + 0.05 * len(manipulated_segments)))
+        confidence = max(fake_prob_a, fake_prob_b, min(0.98, 0.70 + 0.05 * len(manipulated_segments)))
     else:
-        confidence = 1.0 - fake_prob
+        confidence = 1.0 - max(fake_prob_a, fake_prob_b)
 
     # Prepare diagnostic checks & details
     audio_details = {
         "duration_seconds": round(duration, 2),
         "sample_rate": sr,
         "average_spectral_centroid": round(mean_centroid, 2),
-        "model_name": "Wav2Vec2-Deepfake-Audio-V2"
+        "model_name": "Dual-Engine AI Ensemble (Wav2Vec2 + ITW-Wav2Vec2)"
     }
 
     diagnostic_checks = [
         {
-            "name": "Neural Voice Clone Analysis",
-            "status": "FAILED" if (fake_prob > 0.5) else "PASSED",
-            "message": f"Wav2Vec2 classifier detected synthetic/cloned speech characteristics with {fake_prob:.1%} probability."
+            "name": "General Synthesis Detector",
+            "status": "FAILED" if (fake_prob_a > 0.5) else "PASSED",
+            "message": f"MelodyMachine classifier detected synthetic/cloned speech characteristics with {fake_prob_a:.1%} probability."
+        },
+        {
+            "name": "In-The-Wild Clone Detector",
+            "status": "FAILED" if (fake_prob_b > 0.5) else "PASSED",
+            "message": f"ITW-Wav2Vec2 classifier detected in-the-wild spoofing characteristics with {fake_prob_b:.1%} probability."
         },
         {
             "name": "Spectral Discontinuity Check",
