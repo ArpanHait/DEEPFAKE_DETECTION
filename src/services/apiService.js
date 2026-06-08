@@ -3,7 +3,7 @@ import axios from 'axios';
 // Create an Axios instance with default configurations
 const apiClient = axios.create({
   baseURL: 'http://localhost:8000', // Matches FastAPI default dev server port
-  timeout: 45000, // 45-second timeout for model inference
+  timeout: 120000, // 120-second timeout for model inference
 });
 
 /**
