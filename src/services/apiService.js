@@ -2,7 +2,7 @@ import axios from 'axios';
 
 // Create an Axios instance with default configurations
 const apiClient = axios.create({
-  baseURL: 'http://localhost:8000', // Matches FastAPI default dev server port
+  baseURL: import.meta.env.VITE_API_URL || 'https://deep-detect-kiyb.onrender.com', // Points to Render backend with fallback
   timeout: 120000, // 120-second timeout for model inference
 });
 
