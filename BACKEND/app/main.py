@@ -28,7 +28,6 @@ from PIL import Image
 # Internal modules
 from app.model.inference import predict_image
 from app.utils.face_detection import extract_face, detect_face_box
-from app.model.load_model import get_audio_classifier
 
 # --------------------------------------------------
 # App Initialization
@@ -487,15 +486,32 @@ async def analyze_audio(file: UploadFile = File(...)):
 
         # Run AI Deepfake Voice Classifier Model
         import torch
+        import gc
+        from transformers import pipeline
 
         try:
             with torch.inference_mode():
-                clf_a = get_audio_classifier()
+                print("Loading HuggingFace Wav2Vec2 deepfake audio detection model on-demand...")
+                clf_a = pipeline(
+                    "audio-classification",
+                    model="MelodyMachine/Deepfake-audio-detection-V2",
+                    device=-1  # CPU (-1).
+                )
+                print("Audio model loaded. Running inference...")
                 preds_a = clf_a(y)
                 fake_prob_a = next((p["score"] for p in preds_a if p["label"].lower() == "fake"), 0.0)
+                
+                # Unload model immediately and free memory
+                del clf_a
+                gc.collect()
+                print("Audio model unloaded and memory garbage collected successfully.")
         except Exception as err:
             print(f"Error running MelodyMachine classifier: {err}")
             fake_prob_a = 0.0
+            # Ensure cleanup if error occurs after initialization
+            if 'clf_a' in locals():
+                del clf_a
+            gc.collect()
         
         fake_prob_b = 0.0  # Disabled second model to fit Render Free Tier RAM limit
 
