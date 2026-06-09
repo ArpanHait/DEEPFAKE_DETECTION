@@ -1,5 +1,8 @@
+import torch
+import torch.nn.functional as F
 from PIL import Image
 from app.model.load_model import get_classifier
+from app.utils.preprocessing import preprocess_image
 
 
 def predict_image(image: Image.Image) -> dict:
@@ -10,19 +13,29 @@ def predict_image(image: Image.Image) -> dict:
         - score: float confidence (0.0 to 1.0)
     """
     classifier = get_classifier()
-    results = classifier(image)
-
-    # results is a list like:
-    # [{'label': 'Real', 'score': 0.92}, {'label': 'Fake', 'score': 0.08}]
-    best = results[0]  # highest confidence result
-
-    # Normalize label to uppercase
-    label = best["label"].upper()
-    if label not in ("REAL", "FAKE"):
-        # Fallback: treat anything not "REAL" as "FAKE"
-        label = "FAKE" if "fake" in best["label"].lower() else "REAL"
-
+    
+    # Preprocess image to normalized tensor (1, 3, 224, 224)
+    tensor = preprocess_image(image)
+    device = next(classifier.parameters()).device
+    tensor = tensor.to(device)
+    
+    with torch.inference_mode():
+        outputs = classifier(tensor)
+        # Apply softmax to get probabilities
+        probs = F.softmax(outputs, dim=1)[0]
+        
+    # Xicor9/efficientnet-b0-ffpp-c23 labels: 0 for Real, 1 for Fake
+    real_prob = float(probs[0])
+    fake_prob = float(probs[1])
+    
+    if fake_prob > real_prob:
+        label = "FAKE"
+        score = fake_prob
+    else:
+        label = "REAL"
+        score = real_prob
+        
     return {
         "label": label,
-        "score": round(best["score"], 4)
+        "score": round(score, 4)
     }
