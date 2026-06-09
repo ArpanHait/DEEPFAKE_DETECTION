@@ -1,10 +1,15 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import LandingPage from './components/LandingPage';
 import MainApplication from './components/MainApplication';
 import ParticleBackground from './components/ParticleBackground';
+import { pingBackend } from './services/apiService';
 
 function App() {
   const [currentPage, setCurrentPage] = useState('landing');
+
+  useEffect(() => {
+    pingBackend();
+  }, []);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans overflow-hidden relative selection:bg-blue-500/30">

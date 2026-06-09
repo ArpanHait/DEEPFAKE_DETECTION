@@ -93,3 +93,15 @@ export const analyzeWebsite = async (url) => {
     handleError(error);
   }
 };
+
+/**
+ * Sends a background request to wake up the Render server if it's sleeping.
+ */
+export const pingBackend = async () => {
+  try {
+    await apiClient.get('/');
+    console.log('Backend wake-up ping succeeded.');
+  } catch (error) {
+    console.warn('Backend wake-up ping failed (might be booting):', error.message);
+  }
+};
