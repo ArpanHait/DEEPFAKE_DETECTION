@@ -27,7 +27,7 @@ from PIL import Image
 
 # Internal modules
 from app.model.inference import predict_image
-from app.utils.face_detection import extract_face, detect_face_box
+from app.utils.face_detection import extract_face, detect_face_box, detect_and_crop_face
 
 # --------------------------------------------------
 # App Initialization
@@ -82,9 +82,8 @@ def analyze_image(file: UploadFile = File(...)):
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid image file")
 
-    # Detect face box and crop
-    face_box = detect_face_box(image)
-    face_crop = extract_face(image) if face_box is not None else None
+    # Detect face box and crop (optimized single pass)
+    face_box, face_crop = detect_and_crop_face(image)
 
     # Run predictions
     try:
@@ -264,9 +263,8 @@ async def analyze_video(file: UploadFile = File(...)):
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 pil_image = Image.fromarray(rgb_frame)
                 
-                # Detect face box and crop
-                face_box = detect_face_box(pil_image)
-                face_crop = extract_face(pil_image) if face_box is not None else None
+                # Detect face box and crop (optimized single pass)
+                face_box, face_crop = detect_and_crop_face(pil_image)
                 
                 try:
                     if face_box is not None:
