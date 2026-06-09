@@ -274,17 +274,15 @@ async def analyze_video(file: UploadFile = File(...)):
                         faces_detected += 1
                         
                     if face_crop is not None:
-                        # Dual prediction
-                        result_full = predict_image(pil_image)
+                        # Single prediction on face crop (optimized for face classification models)
                         result_face = predict_image(face_crop)
-                        
-                        fake_prob_full = result_full["score"] if result_full["label"] == "FAKE" else 1.0 - result_full["score"]
                         fake_prob_face = result_face["score"] if result_face["label"] == "FAKE" else 1.0 - result_face["score"]
                         
-                        is_fake = (fake_prob_full > 0.5) or (fake_prob_face > 0.85)
-                        score = max(fake_prob_full, fake_prob_face) if is_fake else ((1.0 - fake_prob_full) + (1.0 - fake_prob_face)) / 2.0
+                        # Face crop has a tighter 0.85 threshold to avoid false positives
+                        is_fake = (fake_prob_face > 0.85)
+                        score = fake_prob_face if is_fake else (1.0 - fake_prob_face)
                     else:
-                        # Single prediction
+                        # Fallback to single prediction on full frame
                         result_full = predict_image(pil_image)
                         is_fake = result_full["label"] == "FAKE"
                         score = result_full["score"] if is_fake else 1.0 - result_full["score"]
@@ -376,14 +374,14 @@ async def analyze_video(file: UploadFile = File(...)):
         "message": temporal_msg
     })
     
-    # 4. Ensemble Verification
+    # 4. EfficientNet Verification
     ensemble_status = "FAILED" if is_fake_video else "PASSED"
     if ensemble_status == "FAILED":
-        ensemble_msg = f"Dual-prediction model ensemble flagged the video as FAKE with average confidence of {confidence:.1%}."
+        ensemble_msg = f"EfficientNet-B0 model flagged the video as FAKE with average confidence of {confidence:.1%}."
     else:
-        ensemble_msg = f"Ensemble check passed. No deepfake anomalies detected (confidence: {confidence:.1%})."
+        ensemble_msg = f"EfficientNet-B0 check passed. No deepfake anomalies detected (confidence: {confidence:.1%})."
     diagnostic_checks.append({
-        "name": "Ensemble Model Verification",
+        "name": "EfficientNet-B0 Verification",
         "status": ensemble_status,
         "message": ensemble_msg
     })
