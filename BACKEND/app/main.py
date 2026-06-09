@@ -428,9 +428,6 @@ async def analyze_audio(file: UploadFile = File(...)):
     duration = 0.0
     sr = 16000
     mean_centroid = 0.0
-    fake_prob_a = 0.0
-    fake_prob_b = 0.0
-
     try:
         y, sr = librosa.load(tmp_path, sr=16000)
         duration = float(librosa.get_duration(y=y, sr=sr))
@@ -440,7 +437,7 @@ async def analyze_audio(file: UploadFile = File(...)):
         centroids = librosa.feature.spectral_centroid(y=y, sr=sr)
         mean_centroid = float(np.mean(centroids))
         
-        # Heuristic anomaly detection
+        # Heuristic anomaly detection (Splicing Check)
         hop_length = 512
         frame_times = librosa.frames_to_time(np.arange(mfccs.shape[1]), sr=sr, hop_length=hop_length)
         
@@ -484,68 +481,129 @@ async def analyze_audio(file: UploadFile = File(...)):
                     "reason": "Sustained unnatural spectral discontinuity"
                 })
 
-        # Run AI Deepfake Voice Classifier Model
-        import torch
-        import gc
-        from transformers import pipeline
-
+        # Calculate Pitch (F0) tracking and statistics
+        pitch_std = 0.0
+        pitch_mean = 0.0
         try:
-            with torch.inference_mode():
-                print("Loading HuggingFace Wav2Vec2 deepfake audio detection model on-demand...")
-                clf_a = pipeline(
-                    "audio-classification",
-                    model="MelodyMachine/Deepfake-audio-detection-V2",
-                    device=-1  # CPU (-1).
-                )
-                print("Audio model loaded. Running inference...")
-                preds_a = clf_a(y)
-                fake_prob_a = next((p["score"] for p in preds_a if p["label"].lower() == "fake"), 0.0)
-                
-                # Unload model immediately and free memory
-                del clf_a
-                gc.collect()
-                print("Audio model unloaded and memory garbage collected successfully.")
-        except Exception as err:
-            print(f"Error running MelodyMachine classifier: {err}")
-            fake_prob_a = 0.0
-            # Ensure cleanup if error occurs after initialization
-            if 'clf_a' in locals():
-                del clf_a
-            gc.collect()
-        
-        fake_prob_b = 0.0  # Disabled second model to fit Render Free Tier RAM limit
+            if len(y) > 2048:
+                f0 = librosa.yin(y, fmin=50, fmax=350, sr=sr)
+                f0 = f0[np.isfinite(f0)]
+                if len(f0) > 0:
+                    pitch_std = float(np.std(f0))
+                    pitch_mean = float(np.mean(f0))
+        except Exception as e:
+            print(f"YIN pitch tracking exception: {e}")
+
+        # Calculate Spectral Flatness
+        flatness = librosa.feature.spectral_flatness(y=y)
+        flatness_mean = float(np.mean(flatness))
+        flatness_std = float(np.std(flatness))
+
+        # Calculate high-frequency MFCC standard deviation
+        high_mfcc_std = float(np.mean(np.std(mfccs[8:], axis=1))) if mfccs.shape[0] >= 13 else 0.0
+
+        # Silence / Empty clip guard
+        is_silent = (duration < 0.5) or (float(np.mean(librosa.feature.rms(y=y))) < 0.001)
+        if is_silent:
+            pitch_score = 0.1
+            flatness_score = 0.1
+            hf_score = 0.1
+            splicing_score = 0.1
+            pitch_std = 0.0
+            flatness_std = 0.0
+            high_mfcc_std = 0.0
+        else:
+            # Pitch Monotone / Tracking Glitch check
+            if 0.0 < pitch_std < 12.0:
+                pitch_score = 0.85
+            elif pitch_std > 120.0:
+                pitch_score = 0.65
+            else:
+                pitch_score = 0.15
+
+            # Flatness Dynamic Transitions check
+            if flatness_std < 0.0012:
+                flatness_score = 0.80
+            elif flatness_std < 0.0022:
+                flatness_score = 0.45
+            else:
+                flatness_score = 0.15
+
+            # High-Frequency Detail Uniformity check
+            if high_mfcc_std < 11.0:
+                hf_score = 0.80
+            elif high_mfcc_std < 14.0:
+                hf_score = 0.45
+            else:
+                hf_score = 0.15
+
+            # Splicing Anomalies check
+            splicing_score = min(0.95, 0.15 + 0.35 * len(manipulated_segments)) if len(manipulated_segments) > 0 else 0.15
+
+        # Weighted Ensemble Probability mapping
+        weights = {
+            "pitch": 0.25,
+            "flatness": 0.25,
+            "hf_mfcc": 0.25,
+            "splicing": 0.25
+        }
+        fake_probability = (
+            pitch_score * weights["pitch"] +
+            flatness_score * weights["flatness"] +
+            hf_score * weights["hf_mfcc"] +
+            splicing_score * weights["splicing"]
+        )
+
+        # Multi-indicator correlation boosts
+        suspicious_count = sum(1 for s in [pitch_score, flatness_score, hf_score] if s > 0.6)
+        if suspicious_count >= 2:
+            fake_probability = max(fake_probability, 0.88)
+        if len(manipulated_segments) > 0 and suspicious_count >= 1:
+            fake_probability = max(fake_probability, 0.92)
+
+        # Final bounds clamp
+        fake_probability = max(0.01, min(0.99, fake_probability))
 
     except Exception as e:
         print(f"Audio processing error: {e}")
+        fake_probability = 0.01
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
 
-    # Hybrid Decision Logic:
-    # Flag as FAKE if either the AI model classifies it as fake (> 0.5)
-    # OR if the heuristic splicing detector finds temporal anomalies.
-    is_fake = (fake_prob_a > 0.5) or (len(manipulated_segments) > 0)
+    # Decision parameters
+    is_fake = fake_probability > 0.5
     label = "FAKE" if is_fake else "REAL"
-    
-    # Calculate confidence based on which indicator fired
-    if is_fake:
-        confidence = max(fake_prob_a, min(0.98, 0.70 + 0.05 * len(manipulated_segments)))
-    else:
-        confidence = 1.0 - fake_prob_a
+    confidence = fake_probability if is_fake else 1.0 - fake_probability
 
     # Prepare diagnostic checks & details
     audio_details = {
         "duration_seconds": round(duration, 2),
         "sample_rate": sr,
         "average_spectral_centroid": round(mean_centroid, 2),
-        "model_name": "AI Classifier (Wav2Vec2)"
+        "model_name": "Acoustic Signature Forensics"
     }
 
     diagnostic_checks = [
         {
             "name": "General Synthesis Detector",
-            "status": "FAILED" if (fake_prob_a > 0.5) else "PASSED",
-            "message": f"MelodyMachine classifier detected synthetic/cloned speech characteristics with {fake_prob_a:.1%} probability."
+            "status": "FAILED" if is_fake else "PASSED",
+            "message": f"Acoustic feature ensemble mapping detected synthetic speech characteristics with {fake_probability:.1%} probability."
+        },
+        {
+            "name": "Pitch Intonation Consistency",
+            "status": "FAILED" if (pitch_score > 0.6) else "PASSED",
+            "message": f"Pitch variance standard deviation is {pitch_std:.2f} Hz. Extremely monotone or jittery vocal tracking indicates synthetic speech generation." if (pitch_score > 0.6) else f"Pitch variance is natural ({pitch_std:.2f} Hz), indicating typical human intonation."
+        },
+        {
+            "name": "Spectral Flatness Dynamics",
+            "status": "FAILED" if (flatness_score > 0.6) else "PASSED",
+            "message": f"Spectral flatness variance is uniform ({flatness_std:.6f}). Lacks normal human transitions between vowel harmonics and consonant noise." if (flatness_score > 0.6) else f"Spectral flatness variance is healthy ({flatness_std:.6f})."
+        },
+        {
+            "name": "High-Frequency Detail Check",
+            "status": "FAILED" if (hf_score > 0.6) else "PASSED",
+            "message": f"High-frequency band standard deviation is low ({high_mfcc_std:.2f}). Indicates artificial vocoder smoothing and lack of natural high-frequency details." if (hf_score > 0.6) else f"High-frequency details are natural ({high_mfcc_std:.2f})."
         },
         {
             "name": "Spectral Discontinuity Check",
