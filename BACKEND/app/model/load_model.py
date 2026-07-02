@@ -1,38 +1,41 @@
-import torch
-import torch.nn as nn
-from torchvision import models
-from PIL import Image
+import os
+import onnxruntime as ort
 
-# --------------------------------------------------
-# Singleton Models
-# --------------------------------------------------
-
-_classifier = None
-
+_ort_session = None
 
 def get_classifier():
     """
-    Returns a singleton PyTorch EfficientNet-B0 image classifier
-    trained on Real vs Fake face detection (FaceForensics++).
+    Legacy wrapper for compatibility with older imports.
+    Returns the ONNX Session object.
     """
-    global _classifier
-    if _classifier is None:
-        print("Loading lightweight EfficientNet-B0 deepfake detection model...")
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+    return get_onnx_session()
+
+def get_onnx_session():
+    """
+    Returns a singleton ONNX Runtime InferenceSession for
+    the lightweight MobileNetV3-Small classifier.
+    """
+    global _ort_session
+    if _ort_session is None:
+        print("Loading lightweight MobileNetV3-Small ONNX model...")
+        weights_dir = os.path.join(os.path.dirname(__file__), "weights")
+        onnx_path = os.path.join(weights_dir, "model.onnx")
         
-        # Instantiate EfficientNet-B0
-        model = models.efficientnet_b0(weights=None)
-        model.classifier[1] = nn.Linear(model.classifier[1].in_features, 2)
+        # Self-healing check: run export script if ONNX file is missing
+        if not os.path.exists(onnx_path):
+            print("ONNX model file not found, running export on-the-fly...")
+            from app.model.export_onnx import export
+            export()
+            
+        opts = ort.SessionOptions()
+        opts.intra_op_num_threads = 1
+        opts.inter_op_num_threads = 1
+        opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
         
-        # Load weights from Hugging Face
-        url = "https://huggingface.co/Xicor9/efficientnet-b0-ffpp-c23/resolve/main/efficientnet_b0_ffpp_c23.pth"
-        state_dict = torch.hub.load_state_dict_from_url(url, map_location=device)
-        model.load_state_dict(state_dict)
-        model.to(device)
-        model.eval()
-        
-        _classifier = model
+        _ort_session = ort.InferenceSession(
+            onnx_path, 
+            sess_options=opts, 
+            providers=["CPUExecutionProvider"]
+        )
         print("Model loaded successfully.")
-    return _classifier
-
-
+    return _ort_session
