@@ -383,14 +383,14 @@ def analyze_video(file: UploadFile = File(...)):
         "message": temporal_msg
     })
     
-    # 4. EfficientNet Verification
+    # 4. MobileNetV3-Small Verification
     ensemble_status = "FAILED" if is_fake_video else "PASSED"
     if ensemble_status == "FAILED":
-        ensemble_msg = f"EfficientNet-B0 model flagged the video as FAKE with average confidence of {confidence:.1%}."
+        ensemble_msg = f"MobileNetV3-Small ONNX model flagged the video as FAKE with average confidence of {confidence:.1%}."
     else:
-        ensemble_msg = f"EfficientNet-B0 check passed. No deepfake anomalies detected (confidence: {confidence:.1%})."
+        ensemble_msg = f"MobileNetV3-Small ONNX check passed. No deepfake anomalies detected (confidence: {confidence:.1%})."
     diagnostic_checks.append({
-        "name": "EfficientNet-B0 Verification",
+        "name": "MobileNetV3-Small Verification",
         "status": ensemble_status,
         "message": ensemble_msg
     })
