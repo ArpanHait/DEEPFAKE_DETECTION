@@ -1,25 +1,28 @@
-import dotenv
-dotenv.load_dotenv()
+from dotenv import load_dotenv
+load_dotenv()
 
 # Workaround for AttributeError: module 'torch' has no attribute 'float8_e8m0fnu' in newer transformers
 import torch
 if not hasattr(torch, "float8_e8m0fnu"):
     torch.float8_e8m0fnu = torch.float32
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Body
+from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
 from pydantic import BaseModel
 import uvicorn
 import time
 import io
-import tempfile
+import shutil
+import ipaddress
+from tempfile import NamedTemporaryFile
 import os
 import cv2
 import socket
 import librosa
 import numpy as np
-import base64
+from base64 import b64encode
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
@@ -42,8 +45,13 @@ app = FastAPI(
 # --------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:3000"
+    ],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -208,7 +216,7 @@ def analyze_image(file: UploadFile = File(...)):
 # 2. Video Analysis Endpoint
 # --------------------------------------------------
 @app.post("/analyze/video")
-async def analyze_video(file: UploadFile = File(...)):
+def analyze_video(file: UploadFile = File(...)):
     start_time = time.time()
     
     if not file.content_type.startswith("video/"):
@@ -216,9 +224,8 @@ async def analyze_video(file: UploadFile = File(...)):
     
     # Save upload to a temporary file
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
-            contents = await file.read()
-            tmp.write(contents)
+        with NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
+            shutil.copyfileobj(file.file, tmp)
             tmp_path = tmp.name
     except Exception as e:
         raise HTTPException(status_code=500, detail="Could not save temporary video file")
@@ -253,11 +260,11 @@ async def analyze_video(file: UploadFile = File(...)):
         
         current_frame = 0
         while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            
             if current_frame % frame_interval == 0:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                
                 analyzed_frames += 1
                 # Convert BGR to RGB for PIL
                 rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -301,7 +308,7 @@ async def analyze_video(file: UploadFile = File(...)):
                         
                         # Encode frame to base64
                         _, buffer = cv2.imencode('.jpg', annotated_frame)
-                        frame_b64 = base64.b64encode(buffer).decode('utf-8')
+                        frame_b64 = b64encode(buffer).decode('utf-8')
                         
                         reason = "Face manipulation detected" if face_box is not None else "Global frame manipulation detected"
                         defect_frames.append({
@@ -311,6 +318,11 @@ async def analyze_video(file: UploadFile = File(...)):
                         })
                 except Exception:
                     pass  # Ignore frames where inference fails
+            else:
+                # Grab the frame without decoding it to optimize CPU usage
+                ret = cap.grab()
+                if not ret:
+                    break
             current_frame += 1
             
         cap.release()
@@ -408,16 +420,15 @@ async def analyze_video(file: UploadFile = File(...)):
 # 3. Audio Analysis Endpoint
 # --------------------------------------------------
 @app.post("/analyze/audio")
-async def analyze_audio(file: UploadFile = File(...)):
+def analyze_audio(file: UploadFile = File(...)):
     start_time = time.time()
     
     if not file.content_type.startswith("audio/") and file.content_type not in ["video/mp4", "video/webm"]:
-        pass
+        raise HTTPException(status_code=400, detail="Invalid file type. Must be audio or video.")
 
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
-            contents = await file.read()
-            tmp.write(contents)
+        with NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+            shutil.copyfileobj(file.file, tmp)
             tmp_path = tmp.name
     except Exception as e:
         raise HTTPException(status_code=500, detail="Could not save temporary audio file")
@@ -631,7 +642,7 @@ from urllib3.poolmanager import PoolManager
 class LegacyAdapter(HTTPAdapter):
     def init_poolmanager(self, connections, maxsize, block=False, **kwargs):
         ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
-        ctx.options |= 0x4  # OP_LEGACY_SERVER_CONNECT
+        # Unsafe legacy connection flag removed for security
         self.poolmanager = PoolManager(
             num_pools=connections,
             maxsize=maxsize,
@@ -640,43 +651,26 @@ class LegacyAdapter(HTTPAdapter):
         )
 
 # --------------------------------------------------
-# 4. Website Analysis Endpoint
+# Website Analysis Helper Functions
 # --------------------------------------------------
-@app.post("/analyze/website")
-def analyze_website(request: WebsiteRequest):
-    start_time = time.time()
-    url = request.url
-    
-    if not url.startswith("http"):
-        url = "https://" + url
-        
-    spoofed_elements = []
-    genuine_indicators = []
-    
-    parsed_url = urlparse(url)
-    domain = parsed_url.netloc.lower()
-    
-    # 1. DNS Resolution (IP Address)
+def resolve_dns_ip(domain: str) -> str:
+    """Resolves the DNS IP address of the domain name."""
     try:
-        ip_address = socket.gethostbyname(domain)
+        return socket.gethostbyname(domain)
     except Exception:
-        ip_address = "Could not resolve DNS"
-        
-    # Default website details
-    site_title = "Unknown Title"
-    site_desc = "No meta description available."
-    server_software = "Unknown Server"
-    site_purpose = "No descriptive paragraph could be parsed."
+        return "Could not resolve DNS"
 
-    # Check if the domain belongs to a trusted government or academic TLD
-    is_trusted_tld = domain.endswith(".gov") or domain.endswith(".gov.in") or domain.endswith(".edu") or domain.endswith(".edu.in")
-    
-    if is_trusted_tld:
-        genuine_indicators.append({
-            "check": "Government/Academic Domain Verified",
-            "status": "This website uses an official restricted government (.gov) or educational (.edu) domain name."
-        })
-    
+def is_private_ip(ip_str: str) -> bool:
+    """Checks if an IP address string belongs to a private, loopback, or local network range."""
+    try:
+        ip = ipaddress.ip_address(ip_str)
+        return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved
+    except ValueError:
+        # If it's not a valid IP, assume it's untrusted/invalid
+        return True
+
+def check_domain_heuristics(domain: str, is_trusted_tld: bool, spoofed_elements: list, genuine_indicators: list):
+    """Performs static heuristic analysis on the domain name reputation and subdomain nesting structure."""
     suspicious_keywords = ["login", "secure", "verify", "banking", "account", "update"]
     has_sus_keyword = False
     for keyword in suspicious_keywords:
@@ -705,6 +699,116 @@ def analyze_website(request: WebsiteRequest):
             "status": "Standard, safe domain nesting level. No suspicious phishing subdomain chaining detected."
         })
 
+def parse_website_metadata(soup: BeautifulSoup, default_desc: str, default_purpose: str) -> tuple:
+    """Parses site title, meta description, and primary purpose from the website HTML document."""
+    site_title = "Unknown Title"
+    site_desc = default_desc
+    site_purpose = default_purpose
+    
+    if soup.title and soup.title.string:
+        site_title = soup.title.string.strip()
+        
+    meta_desc = soup.find('meta', attrs={'name': 'description'})
+    desc_val = meta_desc.get('content').strip() if meta_desc and meta_desc.get('content') else ""
+    if not desc_val:
+        og_desc = soup.find('meta', attrs={'property': 'og:description'})
+        desc_val = og_desc.get('content').strip() if og_desc and og_desc.get('content') else ""
+    if desc_val:
+        site_desc = desc_val
+        
+    paragraphs = [p.get_text().strip() for p in soup.find_all(['p', 'span']) if len(p.get_text().strip()) > 40]
+    if paragraphs:
+        site_purpose = paragraphs[0]
+        if len(site_purpose) > 200:
+            site_purpose = site_purpose[:197] + "..."
+            
+    return site_title, site_desc, site_purpose
+
+def check_html_security(soup: BeautifulSoup, domain: str, spoofed_elements: list, genuine_indicators: list):
+    """Analyzes the forms and scripts on the parsed HTML document for potential security spoofing indicators."""
+    forms = soup.find_all('form')
+    has_external_forms = False
+    for form in forms:
+        action = form.get('action')
+        if action and action.startswith("http"):
+            form_domain = urlparse(action).netloc.lower()
+            if form_domain and form_domain != domain:
+                has_external_forms = True
+                spoofed_elements.append({
+                    "element": str(form)[:100] + "...",
+                    "issue": f"Form posts data to a different external domain: {form_domain}"
+                })
+    
+    if not has_external_forms:
+        genuine_indicators.append({
+            "check": "Input Form Security",
+            "status": "No forms detected posting user input or credentials to external third-party domains."
+        })
+    
+    scripts = soup.find_all('script')
+    external_scripts = [s.get('src') for s in scripts if s.get('src') and s.get('src').startswith("http")]
+    suspicious_script_domains = ["ngrok.io", "herokuapp.com", "pastebin.com"]
+    has_sus_scripts = False
+    for src in external_scripts:
+        src_domain = urlparse(src).netloc.lower()
+        for sus in suspicious_script_domains:
+            if sus in src_domain:
+                has_sus_scripts = True
+                spoofed_elements.append({
+                    "element": f"<script src='{src}'>",
+                    "issue": f"Loads script from known suspicious/temporary host: {sus}"
+                })
+    
+    if not has_sus_scripts:
+        genuine_indicators.append({
+            "check": "Active Script Reputation",
+            "status": "All active scripts are loaded from safe, recognized, and non-temporary domains."
+        })
+
+# --------------------------------------------------
+# 4. Website Analysis Endpoint
+# --------------------------------------------------
+@app.post("/analyze/website")
+def analyze_website(request: WebsiteRequest):
+    start_time = time.time()
+    url = request.url
+    
+    if not url.startswith("http"):
+        url = "https://" + url
+        
+    spoofed_elements = []
+    genuine_indicators = []
+    
+    parsed_url = urlparse(url)
+    domain = parsed_url.netloc.lower()
+    
+    # 1. DNS Resolution
+    ip_address = resolve_dns_ip(domain)
+    
+    if ip_address == "Could not resolve DNS":
+        raise HTTPException(status_code=400, detail="Could not resolve website DNS.")
+        
+    if is_private_ip(ip_address):
+        raise HTTPException(status_code=400, detail="Access to private, loopback, or local network addresses is forbidden.")
+        
+    # Default website details
+    site_title = "Unknown Title"
+    site_desc = "No meta description available."
+    server_software = "Unknown Server"
+    site_purpose = "No descriptive paragraph could be parsed."
+
+    # Check if domain belongs to a trusted government/academic TLD
+    is_trusted_tld = domain.endswith(".gov") or domain.endswith(".gov.in") or domain.endswith(".edu") or domain.endswith(".edu.in")
+    
+    if is_trusted_tld:
+        genuine_indicators.append({
+            "check": "Government/Academic Domain Verified",
+            "status": "This website uses an official restricted government (.gov) or educational (.edu) domain name."
+        })
+    
+    # 2. Domain heuristics
+    check_domain_heuristics(domain, is_trusted_tld, spoofed_elements, genuine_indicators)
+
     fetch_success = False
     try:
         session = requests.Session()
@@ -722,67 +826,13 @@ def analyze_website(request: WebsiteRequest):
             
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # Extract Site Title
-            if soup.title and soup.title.string:
-                site_title = soup.title.string.strip()
-                
-            # Extract Meta Description
-            meta_desc = soup.find('meta', attrs={'name': 'description'})
-            desc_val = meta_desc.get('content').strip() if meta_desc and meta_desc.get('content') else ""
-            if not desc_val:
-                og_desc = soup.find('meta', attrs={'property': 'og:description'})
-                desc_val = og_desc.get('content').strip() if og_desc and og_desc.get('content') else ""
-            if desc_val:
-                site_desc = desc_val
-                
-            # Extract Site Purpose (First paragraph > 40 chars)
-            paragraphs = [p.get_text().strip() for p in soup.find_all(['p', 'span']) if len(p.get_text().strip()) > 40]
-            if paragraphs:
-                site_purpose = paragraphs[0]
-                if len(site_purpose) > 200:
-                    site_purpose = site_purpose[:197] + "..."
+            # 3. Extract Metadata
+            site_title, site_desc, site_purpose = parse_website_metadata(soup, site_desc, site_purpose)
             
-            forms = soup.find_all('form')
-            has_external_forms = False
-            for form in forms:
-                action = form.get('action')
-                if action and action.startswith("http"):
-                    form_domain = urlparse(action).netloc.lower()
-                    if form_domain and form_domain != domain:
-                        has_external_forms = True
-                        spoofed_elements.append({
-                            "element": str(form)[:100] + "...",
-                            "issue": f"Form posts data to a different external domain: {form_domain}"
-                        })
-            
-            if not has_external_forms:
-                genuine_indicators.append({
-                    "check": "Input Form Security",
-                    "status": "No forms detected posting user input or credentials to external third-party domains."
-                })
-            
-            scripts = soup.find_all('script')
-            external_scripts = [s.get('src') for s in scripts if s.get('src') and s.get('src').startswith("http")]
-            suspicious_script_domains = ["ngrok.io", "herokuapp.com", "pastebin.com"]
-            has_sus_scripts = False
-            for src in external_scripts:
-                src_domain = urlparse(src).netloc.lower()
-                for sus in suspicious_script_domains:
-                    if sus in src_domain:
-                        has_sus_scripts = True
-                        spoofed_elements.append({
-                            "element": f"<script src='{src}'>",
-                            "issue": f"Loads script from known suspicious/temporary host: {sus}"
-                        })
-            
-            if not has_sus_scripts:
-                genuine_indicators.append({
-                    "check": "Active Script Reputation",
-                    "status": "All active scripts are loaded from safe, recognized, and non-temporary domains."
-                })
+            # 4. Check HTML security
+            check_html_security(soup, domain, spoofed_elements, genuine_indicators)
 
     except Exception as e:
-        # Trusted domains (like government sites) should not be flagged as FAKE due to connection timeout or offline status
         if not is_trusted_tld:
             spoofed_elements.append({
                 "element": "Network Request",

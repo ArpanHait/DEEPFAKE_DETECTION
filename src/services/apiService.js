@@ -2,14 +2,14 @@ import axios from 'axios';
 
 // Create an Axios instance with default configurations
 const apiClient = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || 'https://deep-detect-kiyb.onrender.com', // Points to Render backend with fallback
+  baseURL: (typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env.VITE_API_URL : null) || 'https://deep-detect-kiyb.onrender.com', // Points to Render backend with fallback
   timeout: 120000, // 120-second timeout for model inference
 });
 
 /**
  * Handle API Errors uniformly
  */
-const handleError = (error) => {
+export const handleError = (error) => {
   if (error.response) {
     throw new Error(error.response.data.detail || 'Server responded with an error during analysis.');
   } else if (error.request) {
@@ -20,9 +20,9 @@ const handleError = (error) => {
 };
 
 /**
- * Uploads an image file to the deepfake detection backend.
+ * Shared helper to upload media files to specific backend endpoints.
  */
-export const analyzeImage = async (file, onUploadProgress = null) => {
+const uploadMedia = async (endpoint, file, onUploadProgress = null) => {
   try {
     const formData = new FormData();
     formData.append('file', file);
@@ -33,54 +33,30 @@ export const analyzeImage = async (file, onUploadProgress = null) => {
         onUploadProgress(percentCompleted);
       } : undefined
     };
-    const response = await apiClient.post('/analyze/image', formData, config);
+    const response = await apiClient.post(endpoint, formData, config);
     return response.data;
   } catch (error) {
     handleError(error);
   }
 };
+
+/**
+ * Uploads an image file to the deepfake detection backend.
+ */
+export const analyzeImage = (file, onUploadProgress = null) =>
+  uploadMedia('/analyze/image', file, onUploadProgress);
 
 /**
  * Uploads a video file to the deepfake detection backend.
  */
-export const analyzeVideo = async (file, onUploadProgress = null) => {
-  try {
-    const formData = new FormData();
-    formData.append('file', file);
-    const config = {
-      headers: { 'Content-Type': 'multipart/form-data' },
-      onUploadProgress: onUploadProgress ? (progressEvent) => {
-        const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-        onUploadProgress(percentCompleted);
-      } : undefined
-    };
-    const response = await apiClient.post('/analyze/video', formData, config);
-    return response.data;
-  } catch (error) {
-    handleError(error);
-  }
-};
+export const analyzeVideo = (file, onUploadProgress = null) =>
+  uploadMedia('/analyze/video', file, onUploadProgress);
 
 /**
  * Uploads an audio file to the deepfake detection backend.
  */
-export const analyzeAudio = async (file, onUploadProgress = null) => {
-  try {
-    const formData = new FormData();
-    formData.append('file', file);
-    const config = {
-      headers: { 'Content-Type': 'multipart/form-data' },
-      onUploadProgress: onUploadProgress ? (progressEvent) => {
-        const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-        onUploadProgress(percentCompleted);
-      } : undefined
-    };
-    const response = await apiClient.post('/analyze/audio', formData, config);
-    return response.data;
-  } catch (error) {
-    handleError(error);
-  }
-};
+export const analyzeAudio = (file, onUploadProgress = null) =>
+  uploadMedia('/analyze/audio', file, onUploadProgress);
 
 /**
  * Submits a URL for website spoofing/cloning analysis.

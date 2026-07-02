@@ -21,7 +21,7 @@ def extract_face(image, expansion_factor=2.5):
     Detects face and crops it with a given expansion factor.
     Returns a resized PIL Image (224, 224) or None if no face is detected.
     """
-    boxes, probs = mtcnn.detect(image)
+    boxes, _ = mtcnn.detect(image)
     if boxes is None or len(boxes) == 0:
         return None
 
@@ -54,7 +54,7 @@ def detect_face_box(image):
     Detects the main face bounding box.
     Returns dict {"x": int, "y": int, "width": int, "height": int} or None
     """
-    boxes, probs = mtcnn.detect(image)
+    boxes, _ = mtcnn.detect(image)
     if boxes is None or len(boxes) == 0:
         return None
 
@@ -90,7 +90,7 @@ def detect_and_crop_face(image, expansion_factor=2.5, max_detection_size=768):
         scale = 1.0
         det_image = image
         
-    boxes, probs = mtcnn.detect(det_image)
+    boxes, _ = mtcnn.detect(det_image)
     if boxes is None or len(boxes) == 0:
         return None, None
         
