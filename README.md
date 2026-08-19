@@ -14,6 +14,8 @@
 The backend runs an ultra-lightweight **MobileNetV3-Small** classifier exported to **ONNX** format, achieving **< 10 ms** average inference latency on CPU — purpose-built for deployment on free-tier cloud platforms like Render (512 MB RAM limit).
 
 ---
+### LIVE LINK:- https://detectarp.netlify.app/
+---
 
 ## ✨ Key Features
 
