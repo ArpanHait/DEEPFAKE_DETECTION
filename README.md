@@ -150,7 +150,7 @@ cp .env.example .env
 Start the API server:
 
 ```bash
-uvicorn app.main:app --host 127.0.0.1 --port 8000
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
 > **Note:** On first startup, if the ONNX model file is missing, the backend will automatically export `MobileNetV3-Small` to ONNX format. This is a one-time operation.
